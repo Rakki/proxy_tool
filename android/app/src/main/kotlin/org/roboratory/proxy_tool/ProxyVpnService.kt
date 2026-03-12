@@ -6,6 +6,10 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.Build
 import android.os.IBinder
@@ -15,15 +19,27 @@ import android.system.OsConstants
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.net.URLEncoder
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 
 class ProxyVpnService : VpnService() {
     private var tunInterface: ParcelFileDescriptor? = null
     private var detachedTunFd: Int? = null
     private val executor = Executors.newSingleThreadExecutor()
+    private val monitorExecutor: ScheduledExecutorService =
+        Executors.newSingleThreadScheduledExecutor()
     private val cleanupLock = Any()
     private var activeSessionToken: Long = 0
+    private var pendingRecoveryTask: ScheduledFuture<*>? = null
+    private var pendingHealthTask: ScheduledFuture<*>? = null
+    private var networkCallbackRegistered = false
+    private var lastRecoveryAtMs: Long = 0
     @Volatile
     private var currentConfig: ProxyServiceConfig? = null
     @Volatile
@@ -32,6 +48,49 @@ class ProxyVpnService : VpnService() {
     private var stopRequested = false
     @Volatile
     private var sessionActive = false
+    @Volatile
+    private var networkAvailable = true
+
+    private val connectivityManager by lazy {
+        getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    }
+
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            networkAvailable = true
+            RuntimeEventDispatcher.emit(
+                type = "vpn_network_available",
+                message = "Upstream network became available",
+            )
+            scheduleHealthCheck(1500L)
+        }
+
+        override fun onLost(network: Network) {
+            networkAvailable = false
+            RuntimeEventDispatcher.emit(
+                type = "vpn_network_lost",
+                message = "Upstream network lost, waiting for recovery",
+            )
+            scheduleRecovery("network_lost", 2000L)
+        }
+
+        override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+            networkAvailable =
+                networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            RuntimeEventDispatcher.emit(
+                type = "vpn_network_changed",
+                message = "Network capabilities changed",
+                data = mapOf(
+                    "validated" to networkCapabilities.hasCapability(
+                        NetworkCapabilities.NET_CAPABILITY_VALIDATED,
+                    ),
+                    "transportWifi" to networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI),
+                    "transportCellular" to networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR),
+                ),
+            )
+            scheduleHealthCheck(1500L)
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? {
         return super.onBind(intent)
@@ -40,6 +99,8 @@ class ProxyVpnService : VpnService() {
     override fun onCreate() {
         super.onCreate()
         RuntimeEventDispatcher.initialize(applicationContext)
+        registerNetworkCallbackIfNeeded()
+        schedulePeriodicHealthCheck()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -51,6 +112,7 @@ class ProxyVpnService : VpnService() {
             )
             currentConfig = null
             stopRequested = true
+            cancelMonitorTasks()
             requestShutdownByClosingTun()
             return START_NOT_STICKY
         }
@@ -66,6 +128,7 @@ class ProxyVpnService : VpnService() {
         currentConfig = config
         stopRequested = false
         sessionActive = true
+        scheduleHealthCheck(2500L)
         WidgetStateStore.saveProfile(applicationContext, config.toWidgetMap(), true)
         ProxyWidgetProvider.refreshAll(applicationContext)
         createNotificationChannel()
@@ -204,6 +267,7 @@ class ProxyVpnService : VpnService() {
                     sessionActive = false
                     WidgetStateStore.setActive(applicationContext, false)
                     ProxyWidgetProvider.refreshAll(applicationContext)
+                    cancelMonitorTasks()
                     closeSessionResources()
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
@@ -221,8 +285,11 @@ class ProxyVpnService : VpnService() {
             type = "vpn_destroyed",
             message = "VPN service destroyed",
         )
+        cancelMonitorTasks()
+        unregisterNetworkCallbackIfNeeded()
         requestShutdownByClosingTun()
         executor.shutdown()
+        monitorExecutor.shutdownNow()
         super.onDestroy()
     }
 
@@ -236,8 +303,150 @@ class ProxyVpnService : VpnService() {
         )
         currentConfig = null
         stopRequested = true
+        cancelMonitorTasks()
         requestShutdownByClosingTun()
         super.onRevoke()
+    }
+
+    private fun registerNetworkCallbackIfNeeded() {
+        if (networkCallbackRegistered) {
+            return
+        }
+
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        connectivityManager.registerNetworkCallback(request, networkCallback)
+        networkCallbackRegistered = true
+    }
+
+    private fun unregisterNetworkCallbackIfNeeded() {
+        if (!networkCallbackRegistered) {
+            return
+        }
+
+        runCatching {
+            connectivityManager.unregisterNetworkCallback(networkCallback)
+        }
+        networkCallbackRegistered = false
+    }
+
+    private fun cancelMonitorTasks() {
+        pendingRecoveryTask?.cancel(false)
+        pendingRecoveryTask = null
+        pendingHealthTask?.cancel(false)
+        pendingHealthTask = null
+    }
+
+    private fun schedulePeriodicHealthCheck() {
+        monitorExecutor.scheduleWithFixedDelay(
+            {
+                performHealthCheck("periodic")
+            },
+            20L,
+            20L,
+            TimeUnit.SECONDS,
+        )
+    }
+
+    private fun scheduleHealthCheck(delayMs: Long) {
+        pendingHealthTask?.cancel(false)
+        pendingHealthTask = monitorExecutor.schedule(
+            {
+                performHealthCheck("network_change")
+            },
+            delayMs,
+            TimeUnit.MILLISECONDS,
+        )
+    }
+
+    private fun performHealthCheck(reason: String) {
+        val config = currentConfig ?: return
+        if (stopRequested || !sessionActive) {
+            return
+        }
+        if (!networkAvailable) {
+            scheduleRecovery("no_network", 2500L)
+            return
+        }
+
+        val reachable = isProxyReachable(config)
+        if (!reachable) {
+            RuntimeEventDispatcher.emit(
+                type = "vpn_degraded",
+                message = "Proxy health check failed",
+                data = mapOf(
+                    "profileId" to config.id,
+                    "reason" to reason,
+                    "endpoint" to "${config.host}:${config.port}",
+                ),
+            )
+            scheduleRecovery("health_check_failed", 2500L)
+        } else {
+            RuntimeEventDispatcher.emit(
+                type = "vpn_healthy",
+                message = "Proxy health check succeeded",
+                data = mapOf(
+                    "profileId" to config.id,
+                    "endpoint" to "${config.host}:${config.port}",
+                ),
+            )
+        }
+    }
+
+    private fun isProxyReachable(config: ProxyServiceConfig): Boolean {
+        return runCatching {
+            Socket().use { socket ->
+                protect(socket)
+                socket.connect(InetSocketAddress(config.host, config.port), 3000)
+            }
+            true
+        }.getOrDefault(false)
+    }
+
+    private fun scheduleRecovery(trigger: String, delayMs: Long) {
+        if (stopRequested) {
+            return
+        }
+
+        pendingRecoveryTask?.cancel(false)
+        pendingRecoveryTask = monitorExecutor.schedule(
+            {
+                recoverActiveProfile(trigger)
+            },
+            delayMs,
+            TimeUnit.MILLISECONDS,
+        )
+    }
+
+    private fun recoverActiveProfile(trigger: String) {
+        val config = currentConfig ?: return
+        if (stopRequested) {
+            return
+        }
+        if (!networkAvailable) {
+            scheduleRecovery("awaiting_network", 3000L)
+            return
+        }
+
+        val now = System.currentTimeMillis()
+        if (now - lastRecoveryAtMs < 8000L) {
+            return
+        }
+        lastRecoveryAtMs = now
+
+        RuntimeEventDispatcher.emit(
+            type = "vpn_reconnecting",
+            message = "Reconnecting active proxy after network change",
+            data = mapOf(
+                "profileId" to config.id,
+                "trigger" to trigger,
+                "endpoint" to "${config.host}:${config.port}",
+            ),
+        )
+
+        val restartIntent = createStartIntent(applicationContext, config.toWidgetMap())
+        ContextCompat.startForegroundService(this, restartIntent)
     }
 
     private fun requestShutdownByClosingTun() {
