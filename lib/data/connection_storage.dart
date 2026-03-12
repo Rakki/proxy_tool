@@ -6,6 +6,7 @@ import '../models/proxy_connection.dart';
 class ConnectionStorage {
   static const String _connectionsKey = 'connections';
   static const String _activeConnectionIdKey = 'active_connection_id';
+  static const String _widgetConnectionIdKey = 'widget_connection_id';
   static const String _logsKey = 'connection_logs';
 
   Future<List<ProxyConnection>> loadConnections() async {
@@ -43,6 +44,24 @@ class ConnectionStorage {
     final SharedPreferences preferences =
         await SharedPreferences.getInstance();
     await preferences.remove(_activeConnectionIdKey);
+  }
+
+  Future<String?> loadWidgetConnectionId() async {
+    final SharedPreferences preferences =
+        await SharedPreferences.getInstance();
+    return preferences.getString(_widgetConnectionIdKey);
+  }
+
+  Future<void> saveWidgetConnectionId(String connectionId) async {
+    final SharedPreferences preferences =
+        await SharedPreferences.getInstance();
+    await preferences.setString(_widgetConnectionIdKey, connectionId);
+  }
+
+  Future<void> clearWidgetConnectionId() async {
+    final SharedPreferences preferences =
+        await SharedPreferences.getInstance();
+    await preferences.remove(_widgetConnectionIdKey);
   }
 
   Future<List<ConnectionLogEntry>> loadLogs() async {

@@ -14,6 +14,8 @@ dependencies:
   installed_apps: ^2.1.1
   # Stores non-sensitive settings such as toggles and last selected profile.
   shared_preferences: ^2.5.3
+  # Shows Unity Ads banner under the first saved proxy card.
+  unity_ads_plugin: ^0.3.29
 
 dev_dependencies:
   flutter_test:

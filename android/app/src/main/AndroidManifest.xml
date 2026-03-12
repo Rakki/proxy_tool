@@ -49,6 +49,18 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="user-started VPN tunnel for proxy routing" />
         </service>
+        <receiver
+            android:name=".ProxyWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="org.roboratory.proxy_tool.WIDGET_TOGGLE" />
+                <action android:name="org.roboratory.proxy_tool.WIDGET_OPEN_APP" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/proxy_widget_info" />
+        </receiver>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

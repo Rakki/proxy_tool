@@ -23,6 +23,7 @@ class ProxyVpnService : VpnService() {
     private var detachedTunFd: Int? = null
     private val executor = Executors.newSingleThreadExecutor()
     private val cleanupLock = Any()
+    private var activeSessionToken: Long = 0
     @Volatile
     private var currentConfig: ProxyServiceConfig? = null
     @Volatile
@@ -57,15 +58,22 @@ class ProxyVpnService : VpnService() {
         val config = intent?.let { ProxyServiceConfig.fromIntent(it) }
             ?: return START_NOT_STICKY
 
-        currentConfig = config
         requestShutdownByClosingTun()
+        val sessionToken = synchronized(cleanupLock) {
+            activeSessionToken += 1
+            activeSessionToken
+        }
+        currentConfig = config
         stopRequested = false
         sessionActive = true
+        WidgetStateStore.saveProfile(applicationContext, config.toWidgetMap(), true)
+        ProxyWidgetProvider.refreshAll(applicationContext)
         createNotificationChannel()
         RuntimeEventDispatcher.emit(
             type = "vpn_starting",
             message = "Starting VPN profile ${config.name}",
             data = mapOf(
+                "profileId" to config.id,
                 "endpoint" to "${config.host}:${config.port}",
                 "proxyType" to config.type,
                 "routingMode" to config.routingMode.name,
@@ -114,6 +122,8 @@ class ProxyVpnService : VpnService() {
                 data = mapOf("endpoint" to "${config.host}:${config.port}"),
             )
             stopForeground(STOP_FOREGROUND_REMOVE)
+            WidgetStateStore.setActive(applicationContext, false)
+            ProxyWidgetProvider.refreshAll(applicationContext)
             stopSelf()
             return START_NOT_STICKY
         }
@@ -123,6 +133,7 @@ class ProxyVpnService : VpnService() {
             type = "vpn_established",
             message = "VPN interface established",
             data = mapOf(
+                "profileId" to config.id,
                 "endpoint" to "${config.host}:${config.port}",
                 "proxyType" to config.type,
                 "routingMode" to config.routingMode.name,
@@ -148,11 +159,21 @@ class ProxyVpnService : VpnService() {
                 message = "Failed to switch TUN fd to blocking mode: ${error.message ?: error::class.java.simpleName}",
             )
             stopForeground(STOP_FOREGROUND_REMOVE)
+            WidgetStateStore.setActive(applicationContext, false)
+            ProxyWidgetProvider.refreshAll(applicationContext)
             stopSelf()
             return START_NOT_STICKY
         }
         val tunFd = vpnInterface.detachFd()
-        detachedTunFd = tunFd
+        synchronized(cleanupLock) {
+            if (activeSessionToken != sessionToken) {
+                tunInterface = null
+                ParcelFileDescriptor.adoptFd(tunFd).close()
+                vpnInterface.close()
+                return START_NOT_STICKY
+            }
+            detachedTunFd = tunFd
+        }
         executor.execute {
             try {
                 nativeRunning = true
@@ -176,10 +197,17 @@ class ProxyVpnService : VpnService() {
                     message = "tun2proxy crashed: ${error.message ?: error::class.java.simpleName}",
                 )
             } finally {
-                sessionActive = false
-                closeSessionResources()
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                val shouldFinalizeCurrentSession = synchronized(cleanupLock) {
+                    activeSessionToken == sessionToken
+                }
+                if (shouldFinalizeCurrentSession) {
+                    sessionActive = false
+                    WidgetStateStore.setActive(applicationContext, false)
+                    ProxyWidgetProvider.refreshAll(applicationContext)
+                    closeSessionResources()
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
             }
         }
 
@@ -187,6 +215,8 @@ class ProxyVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        WidgetStateStore.setActive(applicationContext, false)
+        ProxyWidgetProvider.refreshAll(applicationContext)
         RuntimeEventDispatcher.emit(
             type = "vpn_destroyed",
             message = "VPN service destroyed",
@@ -198,6 +228,8 @@ class ProxyVpnService : VpnService() {
 
     override fun onRevoke() {
         Log.i(logTag, "VPN revoked by system")
+        WidgetStateStore.setActive(applicationContext, false)
+        ProxyWidgetProvider.refreshAll(applicationContext)
         RuntimeEventDispatcher.emit(
             type = "vpn_revoked",
             message = "VPN permission revoked by system",
@@ -308,6 +340,7 @@ class ProxyVpnService : VpnService() {
             configuration: Map<*, *>,
         ): Intent {
             val intent = Intent(context, ProxyVpnService::class.java)
+            intent.putExtra("id", configuration["id"] as? String)
             intent.putExtra("name", configuration["name"] as? String)
             intent.putExtra("type", configuration["type"] as? String)
             intent.putExtra("host", configuration["host"] as? String)
@@ -340,6 +373,7 @@ class ProxyVpnService : VpnService() {
 }
 
 private data class ProxyServiceConfig(
+    val id: String?,
     val name: String,
     val type: String,
     val host: String,
@@ -368,9 +402,32 @@ private data class ProxyServiceConfig(
         return "$scheme://$credentials$host:$port"
     }
 
+    fun toWidgetMap(): Map<String, Any?> {
+        return mapOf(
+            "id" to id,
+            "name" to name,
+            "type" to type,
+            "host" to host,
+            "port" to port,
+            "username" to username,
+            "password" to password,
+            "routingMode" to when (routingMode) {
+                RoutingModeValue.ALL_TRAFFIC -> "allTraffic"
+                RoutingModeValue.SELECTED_APPS -> "selectedApps"
+            },
+            "selectedApps" to selectedPackages.map { packageName ->
+                mapOf(
+                    "name" to packageName,
+                    "packageName" to packageName,
+                )
+            },
+        )
+    }
+
     companion object {
         fun fromIntent(intent: Intent): ProxyServiceConfig {
             return ProxyServiceConfig(
+                id = intent.getStringExtra("id"),
                 name = intent.getStringExtra("name") ?: "Proxy profile",
                 type = intent.getStringExtra("type") ?: "socks5",
                 host = intent.getStringExtra("host") ?: "",

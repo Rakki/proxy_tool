@@ -69,6 +69,45 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "proxy_tool/widget",
+        ).setMethodCallHandler { call: MethodCall, result: MethodChannel.Result ->
+            when (call.method) {
+                "syncWidgetState" -> {
+                    val arguments = call.arguments as? Map<*, *>
+                    val connection = arguments?.get("connection") as? Map<*, *>
+                    val isActive = arguments?.get("isActive") as? Boolean ?: false
+
+                    if (connection == null) {
+                        WidgetStateStore.clearProfile(this)
+                    } else {
+                        WidgetStateStore.saveProfile(this, connection, isActive)
+                    }
+                    ProxyWidgetProvider.refreshAll(this)
+                    result.success(null)
+                }
+
+                "clearWidgetState" -> {
+                    WidgetStateStore.clearProfile(this)
+                    ProxyWidgetProvider.refreshAll(this)
+                    result.success(null)
+                }
+
+                "getWidgetState" -> {
+                    result.success(
+                        hashMapOf(
+                            "profileId" to WidgetStateStore.profileId(this),
+                            "profileName" to WidgetStateStore.profileName(this),
+                            "isActive" to WidgetStateStore.isActive(this),
+                        ),
+                    )
+                }
+
+                else -> result.notImplemented()
+            }
+        }
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {

@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:unity_ads_plugin/unity_ads_plugin.dart';
 
+import 'config/unity_ads_config.dart';
 import 'data/connection_storage.dart';
 import 'models/connection_log_entry.dart';
 import 'models/proxy_connection.dart';
@@ -21,25 +23,49 @@ class ProxyToolApp extends StatefulWidget {
   State<ProxyToolApp> createState() => _ProxyToolAppState();
 }
 
-class _ProxyToolAppState extends State<ProxyToolApp> {
+class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver {
   final ConnectionStorage _storage = ConnectionStorage();
   final List<ProxyConnection> _connections = <ProxyConnection>[];
   final List<ConnectionLogEntry> _logs = <ConnectionLogEntry>[];
   StreamSubscription<Map<String, dynamic>>? _runtimeSubscription;
   String? _activeConnectionId;
+  String? _widgetConnectionId;
   bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _initializeUnityAds();
     _runtimeSubscription = ProxyRuntime.runtimeEvents().listen(_handleRuntimeEvent);
     _loadSavedConnections();
   }
 
+  Future<void> _initializeUnityAds() async {
+    if (!UnityAdsConfig.isConfigured) {
+      return;
+    }
+
+    await UnityAds.init(
+      gameId: UnityAdsConfig.androidGameId,
+      testMode: UnityAdsConfig.testMode,
+      onComplete: () {},
+      onFailed: (UnityAdsInitializationError error, String message) {},
+    );
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _runtimeSubscription?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _refreshRuntimeStateFromNative();
+    }
   }
 
   Future<void> _loadSavedConnections() async {
@@ -47,6 +73,8 @@ class _ProxyToolAppState extends State<ProxyToolApp> {
         await _storage.loadConnections();
     final String? savedActiveConnectionId =
         await _storage.loadActiveConnectionId();
+    final String? savedWidgetConnectionId =
+        await _storage.loadWidgetConnectionId();
     final List<ConnectionLogEntry> savedLogs = await _storage.loadLogs();
 
     if (!mounted) {
@@ -61,7 +89,30 @@ class _ProxyToolAppState extends State<ProxyToolApp> {
         ..clear()
         ..addAll(savedLogs);
       _activeConnectionId = savedActiveConnectionId;
+      _widgetConnectionId = savedWidgetConnectionId;
       _isLoading = false;
+    });
+
+    await _refreshRuntimeStateFromNative();
+    await _syncWidgetFromState();
+  }
+
+  Future<void> _refreshRuntimeStateFromNative() async {
+    final Map<String, dynamic> state = await ProxyRuntime.getWidgetState();
+    final String? nativeProfileId = state['profileId'] as String?;
+    final bool nativeIsActive = state['isActive'] as bool? ?? false;
+
+    if (!mounted) {
+      _widgetConnectionId = nativeProfileId ?? _widgetConnectionId;
+      _activeConnectionId = nativeIsActive ? nativeProfileId : null;
+      return;
+    }
+
+    setState(() {
+      if (nativeProfileId != null) {
+        _widgetConnectionId = nativeProfileId;
+      }
+      _activeConnectionId = nativeIsActive ? nativeProfileId : null;
     });
   }
 
@@ -81,7 +132,7 @@ class _ProxyToolAppState extends State<ProxyToolApp> {
     });
 
     await _storage.saveConnections(_connections);
-    await _appendLog('Saved connection "${created.name}".');
+    await _syncWidgetFromState();
   }
 
   Future<void> _openEditConnection(
@@ -110,7 +161,20 @@ class _ProxyToolAppState extends State<ProxyToolApp> {
     });
 
     await _storage.saveConnections(_connections);
-    await _appendLog('Updated connection "${updated.name}".');
+    await _syncWidgetFromState();
+  }
+
+  Future<void> _pinWidgetConnection(ProxyConnection connection) async {
+    if (mounted) {
+      setState(() {
+        _widgetConnectionId = connection.id;
+      });
+    } else {
+      _widgetConnectionId = connection.id;
+    }
+
+    await _storage.saveWidgetConnectionId(connection.id);
+    await _syncWidgetFromState();
   }
 
   Future<void> _startConnection(
@@ -125,7 +189,8 @@ class _ProxyToolAppState extends State<ProxyToolApp> {
       });
 
       await _storage.saveActiveConnectionId(connection.id);
-      await _appendLog('Started connection "${connection.name}".');
+      await _appendLog('Proxy activated: ${connection.name}');
+      await _syncWidgetFromState();
 
       if (!context.mounted) {
         return;
@@ -144,7 +209,7 @@ class _ProxyToolAppState extends State<ProxyToolApp> {
         ),
       );
     } catch (error) {
-      await _appendLog('Failed to start "${connection.name}": $error');
+      await _appendLog('Proxy start error: ${connection.name} • $error');
 
       if (!context.mounted) {
         return;
@@ -170,7 +235,8 @@ class _ProxyToolAppState extends State<ProxyToolApp> {
       });
 
       await _storage.clearActiveConnectionId();
-      await _appendLog('Stopped connection "${connection.name}".');
+      await _appendLog('Proxy deactivated: ${connection.name}');
+      await _syncWidgetFromState();
 
       if (!context.mounted) {
         return;
@@ -182,7 +248,7 @@ class _ProxyToolAppState extends State<ProxyToolApp> {
         ),
       );
     } catch (error) {
-      await _appendLog('Failed to stop "${connection.name}": $error');
+      await _appendLog('Proxy stop error: ${connection.name} • $error');
 
       if (!context.mounted) {
         return;
@@ -200,7 +266,11 @@ class _ProxyToolAppState extends State<ProxyToolApp> {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => LogsScreen(
-          logs: _logs.reversed.toList(growable: false),
+          logs: _logs
+              .where(_shouldDisplayLogEntry)
+              .toList(growable: false)
+              .reversed
+              .toList(growable: false),
           onClearPressed: _clearLogs,
         ),
       ),
@@ -221,6 +291,33 @@ class _ProxyToolAppState extends State<ProxyToolApp> {
     await _storage.saveLogs(_logs);
   }
 
+  Future<void> _syncWidgetFromState() async {
+    final ProxyConnection? widgetConnection = _resolveWidgetConnection();
+    if (widgetConnection == null) {
+      await ProxyRuntime.clearWidgetState();
+      return;
+    }
+
+    await ProxyRuntime.syncWidgetState(
+      connection: widgetConnection.toMap(),
+      isActive: _activeConnectionId == widgetConnection.id,
+    );
+  }
+
+  ProxyConnection? _resolveWidgetConnection() {
+    if (_widgetConnectionId == null) {
+      return null;
+    }
+
+    for (final ProxyConnection connection in _connections) {
+      if (connection.id == _widgetConnectionId) {
+        return connection;
+      }
+    }
+
+    return null;
+  }
+
   Future<void> _deleteConnection(
     BuildContext context,
     ProxyConnection connection,
@@ -231,7 +328,7 @@ class _ProxyToolAppState extends State<ProxyToolApp> {
       try {
         await ProxyRuntime.stop();
       } catch (error) {
-        await _appendLog('Failed to stop "${connection.name}" before delete: $error');
+        await _appendLog('Proxy stop error: ${connection.name} • $error');
       }
     }
 
@@ -240,13 +337,19 @@ class _ProxyToolAppState extends State<ProxyToolApp> {
       if (wasActive) {
         _activeConnectionId = null;
       }
+      if (_widgetConnectionId == connection.id) {
+        _widgetConnectionId = null;
+      }
     });
 
     await _storage.saveConnections(_connections);
     if (wasActive) {
       await _storage.clearActiveConnectionId();
     }
-    await _appendLog('Deleted connection "${connection.name}".');
+    if (_widgetConnectionId == null) {
+      await _storage.clearWidgetConnectionId();
+    }
+    await _syncWidgetFromState();
 
     if (!context.mounted) {
       return;
@@ -293,21 +396,22 @@ class _ProxyToolAppState extends State<ProxyToolApp> {
       (event['data'] as Map<dynamic, dynamic>?) ?? <dynamic, dynamic>{},
     );
 
-    _appendStructuredLog(
-      ConnectionLogEntry(
-        type: type,
-        message: message,
-        timestamp: timestampMs == null
-            ? DateTime.now()
-            : DateTime.fromMillisecondsSinceEpoch(timestampMs),
-        data: data,
-      ),
+    final ConnectionLogEntry? normalizedEntry = _normalizeRuntimeLogEntry(
+      type: type,
+      message: message,
+      timestampMs: timestampMs,
     );
+    if (normalizedEntry != null) {
+      _appendStructuredLog(normalizedEntry);
+    }
 
     if (type == 'vpn_destroyed' ||
         type == 'vpn_revoked' ||
         type == 'tun2proxy_exit' ||
         type == 'vpn_error') {
+      final bool hadActiveConnection = _activeConnectionId != null;
+      final String? activeConnectionName = _activeConnectionName();
+
       if (mounted && _activeConnectionId != null) {
         setState(() {
           _activeConnectionId = null;
@@ -316,7 +420,97 @@ class _ProxyToolAppState extends State<ProxyToolApp> {
         _activeConnectionId = null;
       }
       _storage.clearActiveConnectionId();
+
+      if (type == 'vpn_revoked' && hadActiveConnection && activeConnectionName != null) {
+        _appendLog('Proxy deactivated: $activeConnectionName');
+      }
+      if (type == 'vpn_destroyed' && hadActiveConnection && activeConnectionName != null) {
+        _appendLog('Proxy deactivated: $activeConnectionName');
+      }
+
+      final ProxyConnection? widgetConnection = _resolveWidgetConnection();
+      if (widgetConnection == null) {
+        ProxyRuntime.clearWidgetState();
+      } else {
+        ProxyRuntime.syncWidgetState(
+          connection: widgetConnection.toMap(),
+          isActive: _activeConnectionId == widgetConnection.id,
+        );
+      }
     }
+
+    if (type == 'vpn_starting' || type == 'vpn_established') {
+      final String? profileId = data['profileId'] as String?;
+      if (profileId != null) {
+        if (mounted) {
+          setState(() {
+            _activeConnectionId = profileId;
+          });
+        } else {
+          _activeConnectionId = profileId;
+        }
+      }
+    }
+  }
+
+  String? _activeConnectionName() {
+    final String? activeId = _activeConnectionId;
+    if (activeId == null) {
+      return null;
+    }
+
+    for (final ProxyConnection connection in _connections) {
+      if (connection.id == activeId) {
+        return connection.name;
+      }
+    }
+
+    return null;
+  }
+
+  bool _shouldDisplayLogEntry(ConnectionLogEntry entry) {
+    return entry.type == 'connection' ||
+        entry.message.startsWith('Proxy activated:') ||
+        entry.message.startsWith('Proxy deactivated:') ||
+        entry.message.toLowerCase().contains('error');
+  }
+
+  ConnectionLogEntry? _normalizeRuntimeLogEntry({
+    required String type,
+    required String message,
+    required int? timestampMs,
+  }) {
+    final DateTime timestamp = timestampMs == null
+        ? DateTime.now()
+        : DateTime.fromMillisecondsSinceEpoch(timestampMs);
+
+    if (type == 'native_log') {
+      final RegExpMatch? beginningMatch = RegExp(
+        r'Beginning #\d+ (\w+) ([^ ]+) -> ([^ ]+)',
+      ).firstMatch(message);
+      if (beginningMatch != null) {
+        final String protocol = beginningMatch.group(1) ?? 'IP';
+        final String destination = beginningMatch.group(3) ?? 'unknown';
+
+        return ConnectionLogEntry(
+          type: 'connection',
+          message: '$protocol $destination',
+          timestamp: timestamp,
+        );
+      }
+
+      return null;
+    }
+
+    if (type == 'vpn_error') {
+      return ConnectionLogEntry(
+        type: 'error',
+        message: 'Proxy error: $message',
+        timestamp: timestamp,
+      );
+    }
+
+    return null;
   }
 
   @override
@@ -460,6 +654,7 @@ class _ProxyToolAppState extends State<ProxyToolApp> {
           return HomeScreen(
             connections: _connections,
             activeConnectionId: _activeConnectionId,
+            widgetConnectionId: _widgetConnectionId,
             onAddPressed: () => _openCreateConnection(context),
             onEditPressed: (ProxyConnection connection) =>
                 _openEditConnection(context, connection),
@@ -470,6 +665,7 @@ class _ProxyToolAppState extends State<ProxyToolApp> {
             onLogsPressed: () => _openLogs(context),
             onDeletePressed: (ProxyConnection connection) =>
                 _deleteConnection(context, connection),
+            onPinWidgetPressed: _pinWidgetConnection,
           );
         },
       ),

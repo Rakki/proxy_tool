@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../models/proxy_connection.dart';
 import '../widgets/app_gradient_background.dart';
+import '../widgets/unity_banner_slot.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({
@@ -16,6 +17,8 @@ class HomeScreen extends StatelessWidget {
     required this.onStopPressed,
     required this.onLogsPressed,
     required this.onDeletePressed,
+    required this.onPinWidgetPressed,
+    required this.widgetConnectionId,
   });
 
   final List<ProxyConnection> connections;
@@ -26,6 +29,8 @@ class HomeScreen extends StatelessWidget {
   final ValueChanged<ProxyConnection> onStopPressed;
   final VoidCallback onLogsPressed;
   final ValueChanged<ProxyConnection> onDeletePressed;
+  final ValueChanged<ProxyConnection> onPinWidgetPressed;
+  final String? widgetConnectionId;
 
   @override
   Widget build(BuildContext context) {
@@ -78,27 +83,36 @@ class HomeScreen extends StatelessWidget {
                 delegate: SliverChildListDelegate(
                   <Widget>[
                     if (connections.isEmpty) _EmptyState(onAddPressed: onAddPressed),
-                    ...connections.map(
-                      (ProxyConnection connection) => Padding(
-                        padding: const EdgeInsets.only(bottom: 14),
-                        child: Dismissible(
-                          key: ValueKey<String>(connection.id),
-                          direction: DismissDirection.endToStart,
-                          confirmDismiss: (_) => _confirmDelete(context, connection),
-                          onDismissed: (_) => onDeletePressed(connection),
-                          background: const SizedBox.shrink(),
-                          secondaryBackground: _DeleteBackground(
-                            isActive: connection.id == activeConnectionId,
-                          ),
-                          child: _ConnectionCard(
-                            connection: connection,
-                            isActive: connection.id == activeConnectionId,
-                            onEditPressed: () => onEditPressed(connection),
-                            onStartPressed: () => onStartPressed(connection),
-                            onStopPressed: () => onStopPressed(connection),
+                    ...connections.asMap().entries.expand(
+                      (MapEntry<int, ProxyConnection> entry) => <Widget>[
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 14),
+                          child: Dismissible(
+                            key: ValueKey<String>(entry.value.id),
+                            direction: DismissDirection.endToStart,
+                            confirmDismiss: (_) => _confirmDelete(context, entry.value),
+                            onDismissed: (_) => onDeletePressed(entry.value),
+                            background: const SizedBox.shrink(),
+                            secondaryBackground: _DeleteBackground(
+                              isActive: entry.value.id == activeConnectionId,
+                            ),
+                            child: _ConnectionCard(
+                              connection: entry.value,
+                              isActive: entry.value.id == activeConnectionId,
+                              isPinnedToWidget: entry.value.id == widgetConnectionId,
+                              onEditPressed: () => onEditPressed(entry.value),
+                              onStartPressed: () => onStartPressed(entry.value),
+                              onStopPressed: () => onStopPressed(entry.value),
+                              onPinWidgetPressed: () => onPinWidgetPressed(entry.value),
+                            ),
                           ),
                         ),
-                      ),
+                        if (entry.key == 0)
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 14),
+                            child: UnityBannerSlot(),
+                          ),
+                      ],
                     ),
                   ],
                 ),
@@ -238,16 +252,20 @@ class _ConnectionCard extends StatelessWidget {
   const _ConnectionCard({
     required this.connection,
     required this.isActive,
+    required this.isPinnedToWidget,
     required this.onEditPressed,
     required this.onStartPressed,
     required this.onStopPressed,
+    required this.onPinWidgetPressed,
   });
 
   final ProxyConnection connection;
   final bool isActive;
+  final bool isPinnedToWidget;
   final VoidCallback onEditPressed;
   final VoidCallback onStartPressed;
   final VoidCallback onStopPressed;
+  final VoidCallback onPinWidgetPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -332,6 +350,8 @@ class _ConnectionCard extends StatelessWidget {
                     spacing: 8,
                     runSpacing: 8,
                     children: <Widget>[
+                      if (isPinnedToWidget)
+                        const _LiquidChip(label: 'Pinned'),
                       _LiquidChip(label: connection.type.toUpperCase()),
                       _LiquidChip(label: connection.routingSummary),
                       if (connection.hasCredentials)
@@ -341,6 +361,24 @@ class _ConnectionCard extends StatelessWidget {
                   const SizedBox(height: 18),
                   Row(
                     children: <Widget>[
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: onPinWidgetPressed,
+                          style: OutlinedButton.styleFrom(
+                            backgroundColor: Colors.white.withValues(alpha: 0.34),
+                            side: BorderSide(
+                              color: Colors.white.withValues(alpha: 0.28),
+                            ),
+                          ),
+                          icon: Icon(
+                            isPinnedToWidget
+                                ? Icons.widgets
+                                : Icons.widgets_outlined,
+                          ),
+                          label: Text(isPinnedToWidget ? 'Widget' : 'Pin'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
                       Expanded(
                         child: OutlinedButton.icon(
                           onPressed: onEditPressed,
