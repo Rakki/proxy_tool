@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="widget_title">Proxy Tools</string>
-    <string name="widget_subtitle">Tap to open the app</string>
+    <string name="widget_subtitle">Choose a profile</string>
     <string name="widget_subtitle_empty">Choose a profile in the app</string>
     <string name="widget_subtitle_ready">Ready to start</string>
     <string name="widget_subtitle_active">VPN is active</string>
     <string name="widget_button_open">Open</string>
     <string name="widget_button_start">Start</string>
     <string name="widget_button_stop">Stop</string>
-    <string name="widget_description">Quick start and stop for the last proxy profile</string>
+    <string name="widget_description">Cycle through saved proxy profiles and start or stop them</string>
 </resources>

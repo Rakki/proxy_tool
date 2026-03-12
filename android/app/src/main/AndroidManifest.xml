@@ -55,6 +55,8 @@
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
                 <action android:name="org.roboratory.proxy_tool.WIDGET_TOGGLE" />
+                <action android:name="org.roboratory.proxy_tool.WIDGET_PREVIOUS" />
+                <action android:name="org.roboratory.proxy_tool.WIDGET_NEXT" />
                 <action android:name="org.roboratory.proxy_tool.WIDGET_OPEN_APP" />
             </intent-filter>
             <meta-data

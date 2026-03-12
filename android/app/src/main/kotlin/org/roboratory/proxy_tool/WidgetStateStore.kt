@@ -6,51 +6,94 @@ import org.json.JSONObject
 
 object WidgetStateStore {
     private const val prefsName = "proxy_widget_state"
-    private const val keyProfileJson = "profile_json"
-    private const val keyProfileName = "profile_name"
-    private const val keyProfileId = "profile_id"
-    private const val keyIsActive = "is_active"
+    private const val keyProfilesJson = "profiles_json"
+    private const val keySelectedProfileId = "selected_profile_id"
+    private const val keyActiveProfileId = "active_profile_id"
 
-    fun saveProfile(context: Context, configuration: Map<*, *>, isActive: Boolean) {
-        val json = configurationToJson(configuration).toString()
+    fun saveProfiles(
+        context: Context,
+        profiles: List<Map<*, *>>,
+        activeProfileId: String?,
+    ) {
+        val jsonArray = JSONArray()
+        profiles.forEach { profile ->
+            jsonArray.put(configurationToJson(profile))
+        }
+
+        val currentSelectedId = selectedProfileId(context)
+        val nextSelectedId = when {
+            profiles.isEmpty() -> null
+            profiles.any { (it["id"] as? String) == currentSelectedId } -> currentSelectedId
+            else -> profiles.first()["id"] as? String
+        }
+
         prefs(context).edit()
-            .putString(keyProfileJson, json)
-            .putString(keyProfileName, configuration["name"] as? String ?: "Proxy profile")
-            .putString(keyProfileId, configuration["id"] as? String)
-            .putBoolean(keyIsActive, isActive)
+            .putString(keyProfilesJson, jsonArray.toString())
+            .putString(keySelectedProfileId, nextSelectedId)
+            .putString(keyActiveProfileId, activeProfileId)
             .apply()
     }
 
-    fun setActive(context: Context, isActive: Boolean) {
+    fun clearProfiles(context: Context) {
         prefs(context).edit()
-            .putBoolean(keyIsActive, isActive)
+            .remove(keyProfilesJson)
+            .remove(keySelectedProfileId)
+            .remove(keyActiveProfileId)
             .apply()
     }
 
-    fun clearProfile(context: Context) {
+    fun setActiveProfileId(context: Context, profileId: String?) {
         prefs(context).edit()
-            .remove(keyProfileJson)
-            .remove(keyProfileName)
-            .remove(keyProfileId)
-            .putBoolean(keyIsActive, false)
+            .putString(keyActiveProfileId, profileId)
             .apply()
     }
 
-    fun profileName(context: Context): String? {
-        return prefs(context).getString(keyProfileName, null)
+    fun activeProfileId(context: Context): String? {
+        return prefs(context).getString(keyActiveProfileId, null)
     }
 
-    fun profileId(context: Context): String? {
-        return prefs(context).getString(keyProfileId, null)
+    fun selectedProfileId(context: Context): String? {
+        return prefs(context).getString(keySelectedProfileId, null)
     }
 
-    fun isActive(context: Context): Boolean {
-        return prefs(context).getBoolean(keyIsActive, false)
+    fun profiles(context: Context): List<Map<String, Any?>> {
+        val rawJson = prefs(context).getString(keyProfilesJson, null) ?: return emptyList()
+        val array = JSONArray(rawJson)
+        return buildList {
+            for (index in 0 until array.length()) {
+                add(jsonToMap(array.getJSONObject(index)))
+            }
+        }
     }
 
-    fun loadProfile(context: Context): Map<String, Any?>? {
-        val json = prefs(context).getString(keyProfileJson, null) ?: return null
-        return jsonToMap(JSONObject(json))
+    fun selectedProfile(context: Context): Map<String, Any?>? {
+        val allProfiles = profiles(context)
+        val selectedId = selectedProfileId(context)
+        if (allProfiles.isEmpty()) {
+            return null
+        }
+        return allProfiles.firstOrNull { it["id"] == selectedId } ?: allProfiles.first()
+    }
+
+    fun moveSelection(context: Context, delta: Int) {
+        val allProfiles = profiles(context)
+        if (allProfiles.isEmpty()) {
+            return
+        }
+
+        val selectedId = selectedProfileId(context)
+        val currentIndex = allProfiles.indexOfFirst { it["id"] == selectedId }.let {
+            if (it == -1) 0 else it
+        }
+        val nextIndex = (currentIndex + delta).floorMod(allProfiles.size)
+        prefs(context).edit()
+            .putString(keySelectedProfileId, allProfiles[nextIndex]["id"] as? String)
+            .apply()
+    }
+
+    private fun Int.floorMod(mod: Int): Int {
+        val remainder = this % mod
+        return if (remainder < 0) remainder + mod else remainder
     }
 
     private fun prefs(context: Context) =

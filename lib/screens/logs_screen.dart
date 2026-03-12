@@ -64,13 +64,27 @@ class LogsScreen extends StatelessWidget {
                           ),
                         )
                       : SingleChildScrollView(
-                          child: SelectableText(
-                            logs
-                                .map(_formatEntry)
-                                .join('\n'),
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              height: 1.5,
-                            ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              for (int index = 0; index < logs.length; index++) ...<Widget>[
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 10),
+                                  child: SelectableText(
+                                    _formatEntry(logs[index]),
+                                    style: theme.textTheme.bodyMedium?.copyWith(
+                                      height: 1.5,
+                                    ),
+                                  ),
+                                ),
+                                if (index != logs.length - 1)
+                                  Divider(
+                                    height: 1,
+                                    thickness: 1,
+                                    color: Colors.white.withValues(alpha: 0.24),
+                                  ),
+                              ],
+                            ],
                           ),
                         ),
                 ),

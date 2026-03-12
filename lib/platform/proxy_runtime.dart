@@ -21,14 +21,14 @@ class ProxyRuntime {
   }
 
   static Future<void> syncWidgetState({
-    Map<String, Object?>? connection,
-    required bool isActive,
+    required List<Map<String, Object?>> connections,
+    String? activeConnectionId,
   }) {
     return _widgetChannel.invokeMethod<void>(
       'syncWidgetState',
       <String, Object?>{
-        'connection': connection,
-        'isActive': isActive,
+        'connections': connections,
+        'activeConnectionId': activeConnectionId,
       },
     );
   }

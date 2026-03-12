@@ -77,20 +77,23 @@ class MainActivity : FlutterActivity() {
             when (call.method) {
                 "syncWidgetState" -> {
                     val arguments = call.arguments as? Map<*, *>
-                    val connection = arguments?.get("connection") as? Map<*, *>
-                    val isActive = arguments?.get("isActive") as? Boolean ?: false
+                    val rawConnections = arguments?.get("connections") as? List<*>
+                    val connections = rawConnections
+                        ?.mapNotNull { it as? Map<*, *> }
+                        ?: emptyList()
+                    val activeConnectionId = arguments?.get("activeConnectionId") as? String
 
-                    if (connection == null) {
-                        WidgetStateStore.clearProfile(this)
+                    if (connections.isEmpty()) {
+                        WidgetStateStore.clearProfiles(this)
                     } else {
-                        WidgetStateStore.saveProfile(this, connection, isActive)
+                        WidgetStateStore.saveProfiles(this, connections, activeConnectionId)
                     }
                     ProxyWidgetProvider.refreshAll(this)
                     result.success(null)
                 }
 
                 "clearWidgetState" -> {
-                    WidgetStateStore.clearProfile(this)
+                    WidgetStateStore.clearProfiles(this)
                     ProxyWidgetProvider.refreshAll(this)
                     result.success(null)
                 }
@@ -98,9 +101,9 @@ class MainActivity : FlutterActivity() {
                 "getWidgetState" -> {
                     result.success(
                         hashMapOf(
-                            "profileId" to WidgetStateStore.profileId(this),
-                            "profileName" to WidgetStateStore.profileName(this),
-                            "isActive" to WidgetStateStore.isActive(this),
+                            "profileId" to WidgetStateStore.activeProfileId(this),
+                            "selectedProfileId" to WidgetStateStore.selectedProfileId(this),
+                            "isActive" to (WidgetStateStore.activeProfileId(this) != null),
                         ),
                     )
                 }

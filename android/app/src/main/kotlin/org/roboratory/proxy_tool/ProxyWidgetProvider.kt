@@ -26,21 +26,30 @@ class ProxyWidgetProvider : AppWidgetProvider() {
         super.onReceive(context, intent)
         when (intent.action) {
             actionToggle -> handleToggle(context)
+            actionPrevious -> {
+                WidgetStateStore.moveSelection(context, -1)
+                refreshAll(context)
+            }
+            actionNext -> {
+                WidgetStateStore.moveSelection(context, 1)
+                refreshAll(context)
+            }
             actionOpenApp -> openApp(context)
             AppWidgetManager.ACTION_APPWIDGET_UPDATE -> refreshAll(context)
         }
     }
 
     private fun handleToggle(context: Context) {
-        val profile = WidgetStateStore.loadProfile(context)
+        val profile = WidgetStateStore.selectedProfile(context)
         if (profile == null) {
             openApp(context)
             return
         }
 
-        if (WidgetStateStore.isActive(context)) {
+        val profileId = profile["id"] as? String
+        if (profileId != null && WidgetStateStore.activeProfileId(context) == profileId) {
             context.startService(ProxyVpnService.createStopIntent(context))
-            WidgetStateStore.setActive(context, false)
+            WidgetStateStore.setActiveProfileId(context, null)
             refreshAll(context)
             return
         }
@@ -53,7 +62,7 @@ class ProxyWidgetProvider : AppWidgetProvider() {
 
         val startIntent = ProxyVpnService.createStartIntent(context, profile)
         ContextCompat.startForegroundService(context, startIntent)
-        WidgetStateStore.setActive(context, true)
+        WidgetStateStore.setActiveProfileId(context, profileId)
         refreshAll(context)
     }
 
@@ -66,16 +75,17 @@ class ProxyWidgetProvider : AppWidgetProvider() {
     }
 
     private fun buildViews(context: Context): RemoteViews {
-        val profileName = WidgetStateStore.profileName(context)
-        val isActive = WidgetStateStore.isActive(context)
-        val hasProfile = !profileName.isNullOrBlank()
+        val selectedProfile = WidgetStateStore.selectedProfile(context)
+        val profileName = selectedProfile?.get("name") as? String
+        val profileId = selectedProfile?.get("id") as? String
+        val activeProfileId = WidgetStateStore.activeProfileId(context)
+        val isActive = profileId != null && profileId == activeProfileId
+        val hasProfile = selectedProfile != null
 
         val rootIntent = pendingBroadcast(context, actionOpenApp, 1)
-        val toggleIntent = pendingBroadcast(
-            context,
-            if (hasProfile) actionToggle else actionOpenApp,
-            2,
-        )
+        val toggleIntent = pendingBroadcast(context, if (hasProfile) actionToggle else actionOpenApp, 2)
+        val previousIntent = pendingBroadcast(context, actionPrevious, 3)
+        val nextIntent = pendingBroadcast(context, actionNext, 4)
 
         return RemoteViews(context.packageName, R.layout.proxy_widget).apply {
             setTextViewText(
@@ -100,6 +110,8 @@ class ProxyWidgetProvider : AppWidgetProvider() {
             )
             setOnClickPendingIntent(R.id.widget_root, rootIntent)
             setOnClickPendingIntent(R.id.widget_action_button, toggleIntent)
+            setOnClickPendingIntent(R.id.widget_prev_button, previousIntent)
+            setOnClickPendingIntent(R.id.widget_next_button, nextIntent)
         }
     }
 
@@ -121,6 +133,8 @@ class ProxyWidgetProvider : AppWidgetProvider() {
 
     companion object {
         const val actionToggle = "org.roboratory.proxy_tool.WIDGET_TOGGLE"
+        const val actionPrevious = "org.roboratory.proxy_tool.WIDGET_PREVIOUS"
+        const val actionNext = "org.roboratory.proxy_tool.WIDGET_NEXT"
         const val actionOpenApp = "org.roboratory.proxy_tool.WIDGET_OPEN_APP"
 
         fun refreshAll(context: Context) {

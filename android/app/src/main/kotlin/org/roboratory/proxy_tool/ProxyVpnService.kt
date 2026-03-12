@@ -129,7 +129,7 @@ class ProxyVpnService : VpnService() {
         stopRequested = false
         sessionActive = true
         scheduleHealthCheck(2500L)
-        WidgetStateStore.saveProfile(applicationContext, config.toWidgetMap(), true)
+        WidgetStateStore.setActiveProfileId(applicationContext, config.id)
         ProxyWidgetProvider.refreshAll(applicationContext)
         createNotificationChannel()
         RuntimeEventDispatcher.emit(
@@ -185,7 +185,7 @@ class ProxyVpnService : VpnService() {
                 data = mapOf("endpoint" to "${config.host}:${config.port}"),
             )
             stopForeground(STOP_FOREGROUND_REMOVE)
-            WidgetStateStore.setActive(applicationContext, false)
+            WidgetStateStore.setActiveProfileId(applicationContext, null)
             ProxyWidgetProvider.refreshAll(applicationContext)
             stopSelf()
             return START_NOT_STICKY
@@ -222,7 +222,7 @@ class ProxyVpnService : VpnService() {
                 message = "Failed to switch TUN fd to blocking mode: ${error.message ?: error::class.java.simpleName}",
             )
             stopForeground(STOP_FOREGROUND_REMOVE)
-            WidgetStateStore.setActive(applicationContext, false)
+            WidgetStateStore.setActiveProfileId(applicationContext, null)
             ProxyWidgetProvider.refreshAll(applicationContext)
             stopSelf()
             return START_NOT_STICKY
@@ -265,7 +265,7 @@ class ProxyVpnService : VpnService() {
                 }
                 if (shouldFinalizeCurrentSession) {
                     sessionActive = false
-                    WidgetStateStore.setActive(applicationContext, false)
+                    WidgetStateStore.setActiveProfileId(applicationContext, null)
                     ProxyWidgetProvider.refreshAll(applicationContext)
                     cancelMonitorTasks()
                     closeSessionResources()
@@ -279,7 +279,7 @@ class ProxyVpnService : VpnService() {
     }
 
     override fun onDestroy() {
-        WidgetStateStore.setActive(applicationContext, false)
+        WidgetStateStore.setActiveProfileId(applicationContext, null)
         ProxyWidgetProvider.refreshAll(applicationContext)
         RuntimeEventDispatcher.emit(
             type = "vpn_destroyed",
@@ -295,7 +295,7 @@ class ProxyVpnService : VpnService() {
 
     override fun onRevoke() {
         Log.i(logTag, "VPN revoked by system")
-        WidgetStateStore.setActive(applicationContext, false)
+        WidgetStateStore.setActiveProfileId(applicationContext, null)
         ProxyWidgetProvider.refreshAll(applicationContext)
         RuntimeEventDispatcher.emit(
             type = "vpn_revoked",

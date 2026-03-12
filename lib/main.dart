@@ -29,7 +29,6 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
   final List<ConnectionLogEntry> _logs = <ConnectionLogEntry>[];
   StreamSubscription<Map<String, dynamic>>? _runtimeSubscription;
   String? _activeConnectionId;
-  String? _widgetConnectionId;
   bool _isLoading = true;
 
   @override
@@ -73,8 +72,6 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
         await _storage.loadConnections();
     final String? savedActiveConnectionId =
         await _storage.loadActiveConnectionId();
-    final String? savedWidgetConnectionId =
-        await _storage.loadWidgetConnectionId();
     final List<ConnectionLogEntry> savedLogs = await _storage.loadLogs();
 
     if (!mounted) {
@@ -89,7 +86,6 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
         ..clear()
         ..addAll(savedLogs);
       _activeConnectionId = savedActiveConnectionId;
-      _widgetConnectionId = savedWidgetConnectionId;
       _isLoading = false;
     });
 
@@ -103,15 +99,11 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
     final bool nativeIsActive = state['isActive'] as bool? ?? false;
 
     if (!mounted) {
-      _widgetConnectionId = nativeProfileId ?? _widgetConnectionId;
       _activeConnectionId = nativeIsActive ? nativeProfileId : null;
       return;
     }
 
     setState(() {
-      if (nativeProfileId != null) {
-        _widgetConnectionId = nativeProfileId;
-      }
       _activeConnectionId = nativeIsActive ? nativeProfileId : null;
     });
   }
@@ -161,19 +153,6 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
     });
 
     await _storage.saveConnections(_connections);
-    await _syncWidgetFromState();
-  }
-
-  Future<void> _pinWidgetConnection(ProxyConnection connection) async {
-    if (mounted) {
-      setState(() {
-        _widgetConnectionId = connection.id;
-      });
-    } else {
-      _widgetConnectionId = connection.id;
-    }
-
-    await _storage.saveWidgetConnectionId(connection.id);
     await _syncWidgetFromState();
   }
 
@@ -292,30 +271,17 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
   }
 
   Future<void> _syncWidgetFromState() async {
-    final ProxyConnection? widgetConnection = _resolveWidgetConnection();
-    if (widgetConnection == null) {
+    if (_connections.isEmpty) {
       await ProxyRuntime.clearWidgetState();
       return;
     }
 
     await ProxyRuntime.syncWidgetState(
-      connection: widgetConnection.toMap(),
-      isActive: _activeConnectionId == widgetConnection.id,
+      connections: _connections
+          .map((ProxyConnection connection) => connection.toMap())
+          .toList(growable: false),
+      activeConnectionId: _activeConnectionId,
     );
-  }
-
-  ProxyConnection? _resolveWidgetConnection() {
-    if (_widgetConnectionId == null) {
-      return null;
-    }
-
-    for (final ProxyConnection connection in _connections) {
-      if (connection.id == _widgetConnectionId) {
-        return connection;
-      }
-    }
-
-    return null;
   }
 
   Future<void> _deleteConnection(
@@ -337,17 +303,11 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
       if (wasActive) {
         _activeConnectionId = null;
       }
-      if (_widgetConnectionId == connection.id) {
-        _widgetConnectionId = null;
-      }
     });
 
     await _storage.saveConnections(_connections);
     if (wasActive) {
       await _storage.clearActiveConnectionId();
-    }
-    if (_widgetConnectionId == null) {
-      await _storage.clearWidgetConnectionId();
     }
     await _syncWidgetFromState();
 
@@ -428,15 +388,7 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
         _appendLog('Proxy deactivated: $activeConnectionName');
       }
 
-      final ProxyConnection? widgetConnection = _resolveWidgetConnection();
-      if (widgetConnection == null) {
-        ProxyRuntime.clearWidgetState();
-      } else {
-        ProxyRuntime.syncWidgetState(
-          connection: widgetConnection.toMap(),
-          isActive: _activeConnectionId == widgetConnection.id,
-        );
-      }
+      _syncWidgetFromState();
     }
 
     if (type == 'vpn_starting' || type == 'vpn_established') {
@@ -654,7 +606,6 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
           return HomeScreen(
             connections: _connections,
             activeConnectionId: _activeConnectionId,
-            widgetConnectionId: _widgetConnectionId,
             onAddPressed: () => _openCreateConnection(context),
             onEditPressed: (ProxyConnection connection) =>
                 _openEditConnection(context, connection),
@@ -665,7 +616,6 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
             onLogsPressed: () => _openLogs(context),
             onDeletePressed: (ProxyConnection connection) =>
                 _deleteConnection(context, connection),
-            onPinWidgetPressed: _pinWidgetConnection,
           );
         },
       ),
