@@ -1,0 +1,52 @@
+name: proxy_tool
+description: "Android-first proxy client with per-app routing"
+publish_to: 'none'
+
+version: 0.0.1+1
+
+environment:
+  sdk: ^3.11.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # iOS-style icons for a few platform-adaptive widgets.
+  cupertino_icons: ^1.0.8
+  # App state and dependency injection for config, app list, VPN status, and logs.
+  flutter_riverpod: ^3.0.3
+  # Immutable model annotations for config/status entities.
+  freezed_annotation: ^3.1.0
+  # JSON annotations for config serialization and native bridge payloads.
+  json_annotation: ^4.9.0
+  # Reads installed Android applications for per-app routing selection.
+  installed_apps: ^2.1.1
+  # Stores proxy credentials and other secrets in platform-secure storage.
+  flutter_secure_storage: ^10.0.0-beta.4
+  # Stores non-sensitive settings such as toggles and last selected profile.
+  shared_preferences: ^2.5.3
+  # Handles runtime permissions around notifications and future file access.
+  permission_handler: ^12.0.1
+  # Provides local notifications and foreground-service notification plumbing.
+  flutter_local_notifications: ^19.4.2
+  # Exposes app version/build info for diagnostics and settings screens.
+  package_info_plus: ^9.0.0
+  # Supplies coarse network connectivity hints for UI and diagnostics.
+  connectivity_plus: ^7.0.0
+  # Structured logging for debug output and exportable diagnostics.
+  logger: ^2.6.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  # Runs code generation for Freezed, JSON models, and typed platform APIs.
+  build_runner: ^2.7.1
+  # Generates immutable model implementations from Freezed annotations.
+  freezed: ^3.2.3
+  # Generates JSON encode/decode code for annotated models.
+  json_serializable: ^6.11.0
+  # Generates type-safe Flutter <-> Android host APIs instead of raw channels.
+  pigeon: ^26.0.2
+
+flutter:
+  uses-material-design: true
