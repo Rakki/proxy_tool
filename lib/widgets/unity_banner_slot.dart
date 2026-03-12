@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:unity_ads_plugin/unity_ads_plugin.dart';
 
 import '../config/unity_ads_config.dart';
-import 'glass_panel.dart';
 
 class UnityBannerSlot extends StatelessWidget {
   const UnityBannerSlot({super.key});
@@ -15,11 +14,10 @@ class UnityBannerSlot extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
-    return GlassPanel(
-      borderRadius: BorderRadius.circular(28),
-      padding: const EdgeInsets.all(14),
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(20),
         child: SizedBox(
           width: double.infinity,
           height: 84,

@@ -4,8 +4,8 @@ class UnityAdsConfig {
   static const bool testMode = false;
 
   // Fill these before expecting real ads to render.
-  static const String androidGameId = '';
-  static const String androidBannerPlacementId = '';
+  static const String androidGameId = '6064298';
+  static const String androidBannerPlacementId = 'Banner_Android';
 
   static bool get isConfigured =>
       androidGameId.isNotEmpty && androidBannerPlacementId.isNotEmpty;
