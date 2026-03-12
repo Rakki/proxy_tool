@@ -199,7 +199,62 @@ class _ProxyToolAppState extends State<ProxyToolApp> {
   Future<void> _openLogs(BuildContext context) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => LogsScreen(logs: _logs.reversed.toList(growable: false)),
+        builder: (_) => LogsScreen(
+          logs: _logs.reversed.toList(growable: false),
+          onClearPressed: _clearLogs,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _clearLogs() async {
+    if (!mounted) {
+      _logs.clear();
+      await _storage.saveLogs(_logs);
+      return;
+    }
+
+    setState(() {
+      _logs.clear();
+    });
+
+    await _storage.saveLogs(_logs);
+  }
+
+  Future<void> _deleteConnection(
+    BuildContext context,
+    ProxyConnection connection,
+  ) async {
+    final bool wasActive = connection.id == _activeConnectionId;
+
+    if (wasActive) {
+      try {
+        await ProxyRuntime.stop();
+      } catch (error) {
+        await _appendLog('Failed to stop "${connection.name}" before delete: $error');
+      }
+    }
+
+    setState(() {
+      _connections.removeWhere((ProxyConnection item) => item.id == connection.id);
+      if (wasActive) {
+        _activeConnectionId = null;
+      }
+    });
+
+    await _storage.saveConnections(_connections);
+    if (wasActive) {
+      await _storage.clearActiveConnectionId();
+    }
+    await _appendLog('Deleted connection "${connection.name}".');
+
+    if (!context.mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Connection "${connection.name}" deleted.'),
       ),
     );
   }
@@ -248,13 +303,54 @@ class _ProxyToolAppState extends State<ProxyToolApp> {
         data: data,
       ),
     );
+
+    if (type == 'vpn_destroyed' ||
+        type == 'vpn_revoked' ||
+        type == 'tun2proxy_exit' ||
+        type == 'vpn_error') {
+      if (mounted && _activeConnectionId != null) {
+        setState(() {
+          _activeConnectionId = null;
+        });
+      } else {
+        _activeConnectionId = null;
+      }
+      _storage.clearActiveConnectionId();
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final ColorScheme colorScheme = ColorScheme.fromSeed(
-      seedColor: const Color(0xFF1E5EFF),
+    const ColorScheme colorScheme = ColorScheme(
       brightness: Brightness.light,
+      primary: Color(0xFF0A7BD3),
+      onPrimary: Color(0xFFFFFFFF),
+      primaryContainer: Color(0xFFD9F1FF),
+      onPrimaryContainer: Color(0xFF003355),
+      secondary: Color(0xFF10A9BC),
+      onSecondary: Color(0xFFFFFFFF),
+      secondaryContainer: Color(0xFFD9F7FB),
+      onSecondaryContainer: Color(0xFF00363E),
+      tertiary: Color(0xFF2BCB6F),
+      onTertiary: Color(0xFFFFFFFF),
+      tertiaryContainer: Color(0xFFDCF9E6),
+      onTertiaryContainer: Color(0xFF0A3A1C),
+      error: Color(0xFFBA1A1A),
+      onError: Color(0xFFFFFFFF),
+      errorContainer: Color(0xFFFFDAD6),
+      onErrorContainer: Color(0xFF410002),
+      surface: Color(0xFFFCFDFE),
+      onSurface: Color(0xFF14212B),
+      surfaceContainerHighest: Color(0xFFE2EEF5),
+      onSurfaceVariant: Color(0xFF4A626F),
+      outline: Color(0xFF6E8794),
+      outlineVariant: Color(0xFFC2D2DC),
+      shadow: Color(0xFF000000),
+      scrim: Color(0xFF000000),
+      inverseSurface: Color(0xFF29363F),
+      onInverseSurface: Color(0xFFECF2F5),
+      inversePrimary: Color(0xFFA9D6FF),
+      surfaceTint: Color(0xFF0A7BD3),
     );
 
     return MaterialApp(
@@ -262,11 +358,95 @@ class _ProxyToolAppState extends State<ProxyToolApp> {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: colorScheme,
-        scaffoldBackgroundColor: const Color(0xFFF4F7FB),
+        scaffoldBackgroundColor: const Color(0xFFF3F8FB),
         useMaterial3: true,
-        appBarTheme: const AppBarTheme(centerTitle: false),
-        inputDecorationTheme: const InputDecorationTheme(
-          border: OutlineInputBorder(),
+        appBarTheme: AppBarTheme(
+          centerTitle: false,
+          backgroundColor: Colors.transparent,
+          foregroundColor: const Color(0xFFFFFFFF),
+          surfaceTintColor: Colors.transparent,
+          shadowColor: colorScheme.shadow.withValues(alpha: 0.14),
+          scrolledUnderElevation: 6,
+          elevation: 4,
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(
+              bottom: Radius.circular(28),
+            ),
+          ),
+        ),
+        cardTheme: CardThemeData(
+          elevation: 0,
+          color: colorScheme.surface,
+          margin: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(28),
+            side: BorderSide(color: colorScheme.outlineVariant),
+          ),
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            minimumSize: const Size(0, 56),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(0, 52),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+            ),
+          ),
+        ),
+        floatingActionButtonTheme: FloatingActionButtonThemeData(
+          backgroundColor: const Color(0xFF0381EC),
+          foregroundColor: const Color(0xFFFFFFFF),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(22),
+          ),
+        ),
+        chipTheme: ChipThemeData(
+          backgroundColor: colorScheme.secondaryContainer,
+          selectedColor: colorScheme.primaryContainer,
+          labelStyle: TextStyle(color: colorScheme.onSecondaryContainer),
+          side: BorderSide.none,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: Colors.white.withValues(alpha: 0.18),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 18,
+            vertical: 18,
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(22),
+            borderSide: BorderSide(
+              color: Colors.white.withValues(alpha: 0.26),
+            ),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(22),
+            borderSide: BorderSide(
+              color: Colors.white.withValues(alpha: 0.26),
+            ),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(22),
+            borderSide: BorderSide(
+              color: Colors.white.withValues(alpha: 0.52),
+              width: 1.6,
+            ),
+          ),
+        ),
+        snackBarTheme: SnackBarThemeData(
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
         ),
       ),
       home: Builder(
@@ -288,6 +468,8 @@ class _ProxyToolAppState extends State<ProxyToolApp> {
             onStopPressed: (ProxyConnection connection) =>
                 _stopConnection(context, connection),
             onLogsPressed: () => _openLogs(context),
+            onDeletePressed: (ProxyConnection connection) =>
+                _deleteConnection(context, connection),
           );
         },
       ),

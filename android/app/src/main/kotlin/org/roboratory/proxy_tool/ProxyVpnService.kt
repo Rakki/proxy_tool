@@ -36,6 +36,11 @@ class ProxyVpnService : VpnService() {
         return super.onBind(intent)
     }
 
+    override fun onCreate() {
+        super.onCreate()
+        RuntimeEventDispatcher.initialize(applicationContext)
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             Log.i(logTag, "Received stop action")

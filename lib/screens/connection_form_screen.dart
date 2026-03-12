@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../models/proxy_connection.dart';
+import '../widgets/app_gradient_background.dart';
+import '../widgets/glass_panel.dart';
 import 'app_picker_screen.dart';
 
 class ConnectionFormScreen extends StatefulWidget {
@@ -105,210 +107,246 @@ class _ConnectionFormScreenState extends State<ConnectionFormScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colorScheme = theme.colorScheme;
+
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_isEditing ? 'Edit connection' : 'New connection'),
-      ),
-      body: SafeArea(
+      body: AppGradientBackground(
         child: Form(
           key: _formKey,
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: <Widget>[
-              Text(
-                'Connection settings',
-                style: Theme.of(context).textTheme.headlineSmall,
+          child: CustomScrollView(
+            slivers: <Widget>[
+              SliverAppBar(
+                pinned: true,
+                backgroundColor: Colors.transparent,
+                surfaceTintColor: Colors.transparent,
+                toolbarHeight: 68,
+                scrolledUnderElevation: 8,
+                elevation: 4,
+                title: Text(_isEditing ? 'Edit connection' : 'Add connection'),
               ),
-              const SizedBox(height: 8),
-              Text(
-                _isEditing
-                    ? 'Update the saved proxy profile and keep the connection settings in sync.'
-                    : 'Fill in the upstream proxy details and save the profile.',
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'Traffic routing',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 12),
-              SegmentedButton<RoutingMode>(
-                segments: const <ButtonSegment<RoutingMode>>[
-                  ButtonSegment<RoutingMode>(
-                    value: RoutingMode.allTraffic,
-                    label: Text('All traffic'),
-                    icon: Icon(Icons.language),
-                  ),
-                  ButtonSegment<RoutingMode>(
-                    value: RoutingMode.selectedApps,
-                    label: Text('Selected apps'),
-                    icon: Icon(Icons.apps_outlined),
-                  ),
-                ],
-                selected: <RoutingMode>{_routingMode},
-                onSelectionChanged: (Set<RoutingMode> selection) {
-                  setState(() {
-                    _routingMode = selection.first;
-                  });
-                },
-              ),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Text(
-                  _routingMode == RoutingMode.allTraffic
-                      ? 'When this profile is activated, all device traffic will go through the proxy.'
-                      : 'When this profile is activated, only the listed applications will be wrapped by the VPN/proxy path.',
-                ),
-              ),
-              if (_routingMode == RoutingMode.selectedApps) ...<Widget>[
-                const SizedBox(height: 16),
-                OutlinedButton.icon(
-                  onPressed: _openAppPicker,
-                  icon: const Icon(Icons.apps_outlined),
-                  label: Text(
-                    _selectedApps.isEmpty
-                        ? 'Choose installed apps'
-                        : 'Selected apps: ${_selectedApps.length}',
-                  ),
-                ),
-                if (_validateSelectedApps() case final String error) ...<Widget>[
-                  const SizedBox(height: 8),
-                  Text(
-                    error,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                ],
-                if (_selectedApps.isNotEmpty) ...<Widget>[
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .surfaceContainerLowest,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: Theme.of(context).colorScheme.outlineVariant,
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                sliver: SliverList(
+                  delegate: SliverChildListDelegate(
+                    <Widget>[
+                    _SectionCard(
+                      title: 'Traffic routing',
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          SegmentedButton<RoutingMode>(
+                            segments: const <ButtonSegment<RoutingMode>>[
+                              ButtonSegment<RoutingMode>(
+                                value: RoutingMode.allTraffic,
+                                label: Text('All traffic'),
+                                icon: Icon(Icons.language),
+                              ),
+                              ButtonSegment<RoutingMode>(
+                                value: RoutingMode.selectedApps,
+                                label: Text('Selected apps'),
+                                icon: Icon(Icons.apps_outlined),
+                              ),
+                            ],
+                            selected: <RoutingMode>{_routingMode},
+                            onSelectionChanged: (Set<RoutingMode> selection) {
+                              setState(() {
+                                _routingMode = selection.first;
+                              });
+                            },
+                          ),
+                          const SizedBox(height: 16),
+                          GlassPanel(
+                            padding: const EdgeInsets.all(16),
+                            borderRadius: BorderRadius.circular(20),
+                            child: Text(
+                              _routingMode == RoutingMode.allTraffic
+                                  ? 'All device traffic will be wrapped by the VPN route while this profile is active.'
+                                  : 'Only the selected applications will use the VPN route while the rest of the device stays direct.',
+                              style: theme.textTheme.bodyLarge?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                          if (_routingMode == RoutingMode.selectedApps) ...<Widget>[
+                            const SizedBox(height: 16),
+                            OutlinedButton.icon(
+                              onPressed: _openAppPicker,
+                              icon: const Icon(Icons.apps_outlined),
+                              label: Text(
+                                _selectedApps.isEmpty
+                                    ? 'Choose installed apps'
+                                    : 'Selected apps: ${_selectedApps.length}',
+                              ),
+                            ),
+                            if (_validateSelectedApps() case final String error) ...<Widget>[
+                              const SizedBox(height: 10),
+                              Text(
+                                error,
+                                style: TextStyle(color: colorScheme.error),
+                              ),
+                            ],
+                            if (_selectedApps.isNotEmpty) ...<Widget>[
+                              const SizedBox(height: 14),
+                              ..._selectedApps.map(
+                                (SelectedApp app) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 10),
+                                  child: GlassPanel(
+                                    padding: const EdgeInsets.all(14),
+                                    borderRadius: BorderRadius.circular(18),
+                                    child: Row(
+                                      children: <Widget>[
+                                        Container(
+                                          width: 40,
+                                          height: 40,
+                                          decoration: BoxDecoration(
+                                            color: colorScheme.secondaryContainer,
+                                            borderRadius: BorderRadius.circular(14),
+                                          ),
+                                          child: Icon(
+                                            Icons.apps,
+                                            color: colorScheme.onSecondaryContainer,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: <Widget>[
+                                              Text(app.name),
+                                              const SizedBox(height: 2),
+                                              Text(
+                                                app.packageName,
+                                                style: theme.textTheme.bodySmall?.copyWith(
+                                                  color: colorScheme.onSurfaceVariant,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ],
                       ),
                     ),
-                    child: Column(
-                      children: _selectedApps
-                          .map(
-                            (SelectedApp app) => ListTile(
-                              dense: true,
-                              contentPadding: EdgeInsets.zero,
-                              leading: const Icon(Icons.apps),
-                              title: Text(app.name),
-                              subtitle: Text(app.packageName),
+                    const SizedBox(height: 16),
+                    _SectionCard(
+                      title: 'Connection details',
+                      child: Column(
+                        children: <Widget>[
+                          TextFormField(
+                            controller: _nameController,
+                            decoration: const InputDecoration(
+                              labelText: 'Name',
+                              hintText: 'Work proxy',
                             ),
-                          )
-                          .toList(growable: false),
+                            textInputAction: TextInputAction.next,
+                            validator: _validateRequired,
+                          ),
+                          const SizedBox(height: 14),
+                          DropdownButtonFormField<String>(
+                            initialValue: _selectedType,
+                            decoration: const InputDecoration(labelText: 'Type'),
+                            items: const <DropdownMenuItem<String>>[
+                              DropdownMenuItem<String>(
+                                value: 'socks5',
+                                child: Text('SOCKS5'),
+                              ),
+                              DropdownMenuItem<String>(
+                                value: 'http',
+                                child: Text('HTTP'),
+                              ),
+                              DropdownMenuItem<String>(
+                                value: 'https',
+                                child: Text('HTTPS CONNECT'),
+                              ),
+                            ],
+                            onChanged: (String? value) {
+                              if (value == null) {
+                                return;
+                              }
+                              setState(() {
+                                _selectedType = value;
+                              });
+                            },
+                          ),
+                          const SizedBox(height: 14),
+                          TextFormField(
+                            controller: _hostController,
+                            decoration: const InputDecoration(
+                              labelText: 'Host',
+                              hintText: '192.168.1.10 or proxy.example.com',
+                            ),
+                            keyboardType: TextInputType.url,
+                            textInputAction: TextInputAction.next,
+                            validator: _validateRequired,
+                          ),
+                          const SizedBox(height: 14),
+                          TextFormField(
+                            controller: _portController,
+                            decoration: const InputDecoration(
+                              labelText: 'Port',
+                              hintText: '1080',
+                            ),
+                            keyboardType: TextInputType.number,
+                            textInputAction: TextInputAction.next,
+                            validator: _validatePort,
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
-              ],
-              const SizedBox(height: 20),
-              TextFormField(
-                controller: _nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Name',
-                  hintText: 'Work proxy',
-                ),
-                textInputAction: TextInputAction.next,
-                validator: _validateRequired,
-              ),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<String>(
-                initialValue: _selectedType,
-                decoration: const InputDecoration(labelText: 'Type'),
-                items: const <DropdownMenuItem<String>>[
-                  DropdownMenuItem<String>(
-                    value: 'socks5',
-                    child: Text('SOCKS5'),
-                  ),
-                  DropdownMenuItem<String>(
-                    value: 'http',
-                    child: Text('HTTP'),
-                  ),
-                  DropdownMenuItem<String>(
-                    value: 'https',
-                    child: Text('HTTPS CONNECT'),
-                  ),
-                ],
-                onChanged: (String? value) {
-                  if (value == null) {
-                    return;
-                  }
-                  setState(() {
-                    _selectedType = value;
-                  });
-                },
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _hostController,
-                decoration: const InputDecoration(
-                  labelText: 'Host',
-                  hintText: '192.168.1.10 or proxy.example.com',
-                ),
-                keyboardType: TextInputType.url,
-                textInputAction: TextInputAction.next,
-                validator: _validateRequired,
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _portController,
-                decoration: const InputDecoration(
-                  labelText: 'Port',
-                  hintText: '1080',
-                ),
-                keyboardType: TextInputType.number,
-                textInputAction: TextInputAction.next,
-                validator: _validatePort,
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _usernameController,
-                decoration: const InputDecoration(
-                  labelText: 'Username',
-                  hintText: 'Optional',
-                ),
-                textInputAction: TextInputAction.next,
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _passwordController,
-                decoration: InputDecoration(
-                  labelText: 'Password',
-                  hintText: 'Optional',
-                  suffixIcon: IconButton(
-                    onPressed: () {
-                      setState(() {
-                        _isPasswordVisible = !_isPasswordVisible;
-                      });
-                    },
-                    icon: Icon(
-                      _isPasswordVisible
-                          ? Icons.visibility_off_outlined
-                          : Icons.visibility_outlined,
+                    const SizedBox(height: 16),
+                    _SectionCard(
+                      title: 'Authentication',
+                      child: Column(
+                        children: <Widget>[
+                          TextFormField(
+                            controller: _usernameController,
+                            decoration: const InputDecoration(
+                              labelText: 'Username',
+                              hintText: 'Optional',
+                            ),
+                            textInputAction: TextInputAction.next,
+                          ),
+                          const SizedBox(height: 14),
+                          TextFormField(
+                            controller: _passwordController,
+                            decoration: InputDecoration(
+                              labelText: 'Password',
+                              hintText: 'Optional',
+                              suffixIcon: IconButton(
+                                onPressed: () {
+                                  setState(() {
+                                    _isPasswordVisible = !_isPasswordVisible;
+                                  });
+                                },
+                                icon: Icon(
+                                  _isPasswordVisible
+                                      ? Icons.visibility_off_outlined
+                                      : Icons.visibility_outlined,
+                                ),
+                              ),
+                            ),
+                            obscureText: !_isPasswordVisible,
+                            textInputAction: TextInputAction.done,
+                            onFieldSubmitted: (_) => _save(),
+                          ),
+                        ],
+                      ),
                     ),
+                    const SizedBox(height: 20),
+                    FilledButton(
+                      onPressed: _save,
+                      child: Text(_isEditing ? 'Save changes' : 'Save profile'),
+                    ),
+                    ],
                   ),
                 ),
-                obscureText: !_isPasswordVisible,
-                textInputAction: TextInputAction.done,
-                onFieldSubmitted: (_) => _save(),
-              ),
-              const SizedBox(height: 24),
-              FilledButton(
-                onPressed: _save,
-                child: Text(_isEditing ? 'Save changes' : 'Save'),
               ),
             ],
           ),
@@ -319,14 +357,14 @@ class _ConnectionFormScreenState extends State<ConnectionFormScreen> {
 
   String? _validateRequired(String? value) {
     if (value == null || value.trim().isEmpty) {
-      return 'Required field';
+      return 'This field is required';
     }
     return null;
   }
 
   String? _validatePort(String? value) {
     if (value == null || value.trim().isEmpty) {
-      return 'Required field';
+      return 'Port is required';
     }
 
     final int? port = int.tryParse(value.trim());
@@ -338,14 +376,36 @@ class _ConnectionFormScreenState extends State<ConnectionFormScreen> {
   }
 
   String? _validateSelectedApps() {
-    if (_routingMode != RoutingMode.selectedApps) {
-      return null;
+    if (_routingMode == RoutingMode.selectedApps && _selectedApps.isEmpty) {
+      return 'Select at least one application';
     }
-
-    if (_selectedApps.isEmpty) {
-      return 'Choose at least one installed app';
-    }
-
     return null;
+  }
+}
+
+class _SectionCard extends StatelessWidget {
+  const _SectionCard({
+    required this.title,
+    required this.child,
+  });
+
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            title,
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 16),
+          child,
+        ],
+      ),
+    );
   }
 }
