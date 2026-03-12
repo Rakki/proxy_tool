@@ -2,6 +2,7 @@
 #include <dlfcn.h>
 #include <jni.h>
 
+#include <atomic>
 #include <mutex>
 #include <string>
 
@@ -24,6 +25,7 @@ SetLogCallbackFn g_set_log_callback = nullptr;
 WithFdRunFn g_with_fd_run = nullptr;
 StopFn g_stop = nullptr;
 SetTrafficCallbackFn g_set_traffic_callback = nullptr;
+std::atomic<bool> g_callbacks_enabled{false};
 
 std::string verbosity_to_string(enum Tun2proxyVerbosity verbosity) {
     switch (verbosity) {
@@ -96,7 +98,7 @@ bool ensure_tun2proxy_loaded() {
 }
 
 void emit_log_to_java(const char* level, const char* message) {
-    if (g_bridge_class == nullptr || message == nullptr) {
+    if (!g_callbacks_enabled.load() || g_bridge_class == nullptr || message == nullptr) {
         return;
     }
 
@@ -121,7 +123,7 @@ void emit_log_to_java(const char* level, const char* message) {
 }
 
 void emit_traffic_to_java(const struct Tun2proxyTrafficStatus* status) {
-    if (g_bridge_class == nullptr || status == nullptr) {
+    if (!g_callbacks_enabled.load() || g_bridge_class == nullptr || status == nullptr) {
         return;
     }
 
@@ -146,6 +148,10 @@ void emit_traffic_to_java(const struct Tun2proxyTrafficStatus* status) {
 }
 
 void log_callback(enum Tun2proxyVerbosity verbosity, const char* message, void* /*ctx*/) {
+    if (!g_callbacks_enabled.load()) {
+        return;
+    }
+
     int priority = ANDROID_LOG_INFO;
     switch (verbosity) {
         case Tun2proxyVerbosity_Error:
@@ -172,7 +178,20 @@ void log_callback(enum Tun2proxyVerbosity verbosity, const char* message, void* 
 }
 
 void traffic_callback(const struct Tun2proxyTrafficStatus* status, void* /*ctx*/) {
+    if (!g_callbacks_enabled.load()) {
+        return;
+    }
     emit_traffic_to_java(status);
+}
+
+void disable_callbacks() {
+    g_callbacks_enabled.store(false);
+    if (g_set_log_callback != nullptr) {
+        g_set_log_callback(nullptr, nullptr);
+    }
+    if (g_set_traffic_callback != nullptr) {
+        g_set_traffic_callback(0, nullptr, nullptr);
+    }
 }
 }  // namespace
 
@@ -205,6 +224,7 @@ Java_org_roboratory_proxy_1tool_NativeTun2ProxyBridge_startTun2Proxy(
     }
 
     const char* proxy = env->GetStringUTFChars(proxy_url, nullptr);
+    g_callbacks_enabled.store(true);
     g_set_log_callback(log_callback, nullptr);
     g_set_traffic_callback(2, traffic_callback, nullptr);
     const int result = g_with_fd_run(
@@ -216,6 +236,7 @@ Java_org_roboratory_proxy_1tool_NativeTun2ProxyBridge_startTun2Proxy(
         Tun2proxyDns_Virtual,
         Tun2proxyVerbosity_Info);
     env->ReleaseStringUTFChars(proxy_url, proxy);
+    disable_callbacks();
     return result;
 }
 
@@ -227,5 +248,6 @@ Java_org_roboratory_proxy_1tool_NativeTun2ProxyBridge_stopTun2Proxy(
     if (!ensure_tun2proxy_loaded()) {
         return -1;
     }
+    disable_callbacks();
     return g_stop();
 }

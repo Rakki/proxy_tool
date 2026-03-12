@@ -22,8 +22,15 @@ class ProxyVpnService : VpnService() {
     private var tunInterface: ParcelFileDescriptor? = null
     private var detachedTunFd: Int? = null
     private val executor = Executors.newSingleThreadExecutor()
+    private val cleanupLock = Any()
     @Volatile
     private var currentConfig: ProxyServiceConfig? = null
+    @Volatile
+    private var nativeRunning = false
+    @Volatile
+    private var stopRequested = false
+    @Volatile
+    private var sessionActive = false
 
     override fun onBind(intent: Intent?): IBinder? {
         return super.onBind(intent)
@@ -37,9 +44,8 @@ class ProxyVpnService : VpnService() {
                 message = "Stop requested for active VPN session",
             )
             currentConfig = null
-            stopCurrentSession()
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
+            stopRequested = true
+            requestShutdownByClosingTun()
             return START_NOT_STICKY
         }
 
@@ -47,7 +53,9 @@ class ProxyVpnService : VpnService() {
             ?: return START_NOT_STICKY
 
         currentConfig = config
-        stopCurrentSession()
+        requestShutdownByClosingTun()
+        stopRequested = false
+        sessionActive = true
         createNotificationChannel()
         RuntimeEventDispatcher.emit(
             type = "vpn_starting",
@@ -142,11 +150,13 @@ class ProxyVpnService : VpnService() {
         detachedTunFd = tunFd
         executor.execute {
             try {
+                nativeRunning = true
                 val result = NativeTun2ProxyBridge.startTun2Proxy(
                     config.proxyUrl(),
                     tunFd,
                     config.mtu,
                 )
+                nativeRunning = false
                 Log.i(logTag, "tun2proxy exited with code $result")
                 RuntimeEventDispatcher.emit(
                     type = "tun2proxy_exit",
@@ -154,12 +164,15 @@ class ProxyVpnService : VpnService() {
                     data = mapOf("exitCode" to result),
                 )
             } catch (error: Throwable) {
+                nativeRunning = false
                 Log.e(logTag, "tun2proxy crashed", error)
                 RuntimeEventDispatcher.emit(
                     type = "vpn_error",
                     message = "tun2proxy crashed: ${error.message ?: error::class.java.simpleName}",
                 )
             } finally {
+                sessionActive = false
+                closeSessionResources()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
@@ -173,8 +186,8 @@ class ProxyVpnService : VpnService() {
             type = "vpn_destroyed",
             message = "VPN service destroyed",
         )
-        stopCurrentSession()
-        executor.shutdownNow()
+        requestShutdownByClosingTun()
+        executor.shutdown()
         super.onDestroy()
     }
 
@@ -185,30 +198,37 @@ class ProxyVpnService : VpnService() {
             message = "VPN permission revoked by system",
         )
         currentConfig = null
-        stopCurrentSession()
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        stopRequested = true
+        requestShutdownByClosingTun()
         super.onRevoke()
     }
 
-    private fun stopCurrentSession() {
-        try {
-            val result = NativeTun2ProxyBridge.stopTun2Proxy()
-            RuntimeEventDispatcher.emit(
-                type = "tun2proxy_stop",
-                message = "tun2proxy stop requested",
-                data = mapOf("result" to result),
-            )
-        } catch (error: Throwable) {
-            Log.w(logTag, "Failed to stop tun2proxy cleanly", error)
-            RuntimeEventDispatcher.emit(
-                type = "vpn_error",
-                message = "Failed to stop tun2proxy cleanly: ${error.message ?: error::class.java.simpleName}",
-            )
+    private fun requestShutdownByClosingTun() {
+        RuntimeEventDispatcher.emit(
+            type = "tun2proxy_stop",
+            message = "Stopping tun2proxy by closing TUN resources",
+        )
+        synchronized(cleanupLock) {
+            nativeRunning = false
+            sessionActive = false
+        }
+        closeSessionResources()
+    }
+
+    private fun closeSessionResources() {
+        var tunFdToClose: Int? = null
+        var tunInterfaceToClose: ParcelFileDescriptor? = null
+
+        synchronized(cleanupLock) {
+            sessionActive = false
+            tunFdToClose = detachedTunFd
+            detachedTunFd = null
+            tunInterfaceToClose = tunInterface
+            tunInterface = null
         }
 
         try {
-            detachedTunFd?.let { fd ->
+            tunFdToClose?.let { fd ->
                 ParcelFileDescriptor.adoptFd(fd).close()
             }
         } catch (error: Throwable) {
@@ -218,10 +238,9 @@ class ProxyVpnService : VpnService() {
                 message = "Failed to close detached tun fd: ${error.message ?: error::class.java.simpleName}",
             )
         }
-        detachedTunFd = null
 
         try {
-            tunInterface?.close()
+            tunInterfaceToClose?.close()
         } catch (error: Exception) {
             Log.w(logTag, "Failed to close VPN interface", error)
             RuntimeEventDispatcher.emit(
@@ -229,7 +248,6 @@ class ProxyVpnService : VpnService() {
                 message = "Failed to close VPN interface: ${error.message ?: error::class.java.simpleName}",
             )
         }
-        tunInterface = null
     }
 
     private fun buildNotification(config: ProxyServiceConfig): Notification {
