@@ -40,6 +40,10 @@ class ProxyVpnService : VpnService() {
     private var pendingHealthTask: ScheduledFuture<*>? = null
     private var networkCallbackRegistered = false
     private var lastRecoveryAtMs: Long = 0
+    private var lastObservedTxBytes: Long = 0
+    private var lastObservedRxBytes: Long = 0
+    private var lastTrafficProgressAtMs: Long = 0
+    private var proxyReadyEmitted = false
     @Volatile
     private var currentConfig: ProxyServiceConfig? = null
     @Volatile
@@ -128,6 +132,7 @@ class ProxyVpnService : VpnService() {
         currentConfig = config
         stopRequested = false
         sessionActive = true
+        resetRuntimeHealthState()
         scheduleHealthCheck(2500L)
         WidgetStateStore.setActiveProfileId(applicationContext, config.id)
         ProxyWidgetProvider.refreshAll(applicationContext)
@@ -370,6 +375,44 @@ class ProxyVpnService : VpnService() {
             return
         }
 
+        val now = System.currentTimeMillis()
+        val runtimeStats = NativeTun2ProxyBridge.runtimeStats()
+        val txBytes = runtimeStats["tx"] ?: 0L
+        val rxBytes = runtimeStats["rx"] ?: 0L
+        val lastTrafficAtMs = runtimeStats["lastTrafficAtMs"] ?: 0L
+        val lastConnectionAttemptAtMs = runtimeStats["lastConnectionAttemptAtMs"] ?: 0L
+        val hasTrafficProgress =
+            txBytes != lastObservedTxBytes || rxBytes != lastObservedRxBytes
+        if (hasTrafficProgress) {
+            lastObservedTxBytes = txBytes
+            lastObservedRxBytes = rxBytes
+            lastTrafficProgressAtMs = maxOf(lastTrafficAtMs, now)
+            emitProxyReadyIfNeeded(config, "traffic")
+        } else if (lastTrafficAtMs > lastTrafficProgressAtMs) {
+            lastTrafficProgressAtMs = lastTrafficAtMs
+        }
+
+        val stalledConnectionAttempt =
+            lastConnectionAttemptAtMs > 0L &&
+                lastConnectionAttemptAtMs >= lastTrafficProgressAtMs &&
+                now - lastConnectionAttemptAtMs >= stalledTrafficThresholdMs &&
+                now - lastConnectionAttemptAtMs <= staleConnectionAttemptWindowMs
+        if (stalledConnectionAttempt) {
+            RuntimeEventDispatcher.emit(
+                type = "vpn_degraded",
+                message = "Proxy tunnel stalled after connection attempt",
+                data = mapOf(
+                    "profileId" to config.id,
+                    "reason" to "traffic_stalled",
+                    "endpoint" to "${config.host}:${config.port}",
+                    "lastConnectionAttemptAtMs" to lastConnectionAttemptAtMs,
+                    "lastTrafficAtMs" to lastTrafficProgressAtMs,
+                ),
+            )
+            scheduleRecovery("traffic_stalled", 1200L)
+            return
+        }
+
         val reachable = isProxyReachable(config)
         if (!reachable) {
             RuntimeEventDispatcher.emit(
@@ -383,6 +426,7 @@ class ProxyVpnService : VpnService() {
             )
             scheduleRecovery("health_check_failed", 2500L)
         } else {
+            emitProxyReadyIfNeeded(config, "health_check")
             RuntimeEventDispatcher.emit(
                 type = "vpn_healthy",
                 message = "Proxy health check succeeded",
@@ -458,7 +502,34 @@ class ProxyVpnService : VpnService() {
             nativeRunning = false
             sessionActive = false
         }
+        resetRuntimeHealthState()
         closeSessionResources()
+    }
+
+    private fun resetRuntimeHealthState() {
+        lastObservedTxBytes = 0L
+        lastObservedRxBytes = 0L
+        lastTrafficProgressAtMs = 0L
+        proxyReadyEmitted = false
+        NativeTun2ProxyBridge.resetRuntimeStats()
+    }
+
+    private fun emitProxyReadyIfNeeded(config: ProxyServiceConfig, source: String) {
+        if (proxyReadyEmitted || stopRequested || !sessionActive) {
+            return
+        }
+
+        proxyReadyEmitted = true
+        RuntimeEventDispatcher.emit(
+            type = "proxy_ready",
+            message = "Proxy ready",
+            data = mapOf(
+                "profileId" to config.id,
+                "endpoint" to "${config.host}:${config.port}",
+                "proxyType" to config.type,
+                "source" to source,
+            ),
+        )
     }
 
     private fun closeSessionResources() {
@@ -543,6 +614,8 @@ class ProxyVpnService : VpnService() {
         private const val channelId = "proxy_vpn"
         private const val notificationId = 1001
         private const val logTag = "ProxyVpnService"
+        private const val stalledTrafficThresholdMs = 15_000L
+        private const val staleConnectionAttemptWindowMs = 120_000L
 
         fun createStartIntent(
             context: Context,

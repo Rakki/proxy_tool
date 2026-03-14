@@ -1,6 +1,18 @@
 package org.roboratory.proxy_tool
 
 object NativeTun2ProxyBridge {
+    @Volatile
+    private var lastTrafficAtMs: Long = 0L
+
+    @Volatile
+    private var lastConnectionAttemptAtMs: Long = 0L
+
+    @Volatile
+    private var lastTxBytes: Long = 0L
+
+    @Volatile
+    private var lastRxBytes: Long = 0L
+
     init {
         System.loadLibrary("proxybridge")
     }
@@ -13,8 +25,27 @@ object NativeTun2ProxyBridge {
 
     external fun stopTun2Proxy(): Int
 
+    fun resetRuntimeStats() {
+        lastTrafficAtMs = 0L
+        lastConnectionAttemptAtMs = 0L
+        lastTxBytes = 0L
+        lastRxBytes = 0L
+    }
+
+    fun runtimeStats(): Map<String, Long> {
+        return mapOf(
+            "lastTrafficAtMs" to lastTrafficAtMs,
+            "lastConnectionAttemptAtMs" to lastConnectionAttemptAtMs,
+            "tx" to lastTxBytes,
+            "rx" to lastRxBytes,
+        )
+    }
+
     @JvmStatic
     fun onNativeLog(level: String, message: String) {
+        if (message.startsWith("Beginning #")) {
+            lastConnectionAttemptAtMs = System.currentTimeMillis()
+        }
         RuntimeEventDispatcher.emit(
             type = "native_log",
             message = message,
@@ -24,6 +55,9 @@ object NativeTun2ProxyBridge {
 
     @JvmStatic
     fun onNativeTraffic(tx: Long, rx: Long) {
+        lastTrafficAtMs = System.currentTimeMillis()
+        lastTxBytes = tx
+        lastRxBytes = rx
         RuntimeEventDispatcher.emit(
             type = "traffic",
             message = "Traffic update",

@@ -4,14 +4,30 @@ import '../models/connection_log_entry.dart';
 import '../widgets/app_gradient_background.dart';
 import '../widgets/glass_panel.dart';
 
+class TrafficSnapshot {
+  const TrafficSnapshot({
+    required this.uploadTotal,
+    required this.downloadTotal,
+    required this.uploadSpeed,
+    required this.downloadSpeed,
+  });
+
+  final String uploadTotal;
+  final String downloadTotal;
+  final String uploadSpeed;
+  final String downloadSpeed;
+}
+
 class LogsScreen extends StatelessWidget {
   const LogsScreen({
     super.key,
     required this.logs,
+    required this.trafficSnapshot,
     required this.onClearPressed,
   });
 
   final List<ConnectionLogEntry> logs;
+  final TrafficSnapshot trafficSnapshot;
   final Future<void> Function() onClearPressed;
 
   @override
@@ -51,42 +67,48 @@ class LogsScreen extends StatelessWidget {
             ),
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-              sliver: SliverFillRemaining(
-                hasScrollBody: false,
-                child: GlassPanel(
-                  borderRadius: BorderRadius.circular(28),
-                  padding: const EdgeInsets.all(18),
-                  child: logs.isEmpty
-                      ? Center(
-                          child: Text(
-                            'No logs yet',
-                            style: theme.textTheme.titleMedium,
-                          ),
-                        )
-                      : SingleChildScrollView(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: <Widget>[
-                              for (int index = 0; index < logs.length; index++) ...<Widget>[
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(vertical: 10),
-                                  child: SelectableText(
-                                    _formatEntry(logs[index]),
-                                    style: theme.textTheme.bodyMedium?.copyWith(
-                                      height: 1.5,
+              sliver: SliverList(
+                delegate: SliverChildListDelegate(
+                  <Widget>[
+                    _TrafficPanel(trafficSnapshot: trafficSnapshot),
+                    const SizedBox(height: 12),
+                    GlassPanel(
+                      borderRadius: BorderRadius.circular(28),
+                      padding: const EdgeInsets.all(18),
+                      child: logs.isEmpty
+                          ? Center(
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 24),
+                                child: Text(
+                                  'No logs yet',
+                                  style: theme.textTheme.titleMedium,
+                                ),
+                              ),
+                            )
+                          : Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: <Widget>[
+                                for (int index = 0; index < logs.length; index++) ...<Widget>[
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 10),
+                                    child: SelectableText(
+                                      _formatEntry(logs[index]),
+                                      style: theme.textTheme.bodyMedium?.copyWith(
+                                        height: 1.5,
+                                      ),
                                     ),
                                   ),
-                                ),
-                                if (index != logs.length - 1)
-                                  Divider(
-                                    height: 1,
-                                    thickness: 1,
-                                    color: Colors.white.withValues(alpha: 0.24),
-                                  ),
+                                  if (index != logs.length - 1)
+                                    Divider(
+                                      height: 1,
+                                      thickness: 1,
+                                      color: Colors.white.withValues(alpha: 0.24),
+                                    ),
+                                ],
                               ],
-                            ],
-                          ),
-                        ),
+                            ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -120,12 +142,17 @@ class LogsScreen extends StatelessWidget {
     return switch (key) {
       'tx' => 'tx',
       'rx' => 'rx',
+      'up' => 'up',
+      'down' => 'down',
+      'upSpeed' => 'up/s',
+      'downSpeed' => 'down/s',
       'endpoint' => 'endpoint',
       'proxyType' => 'proxy',
       'routingMode' => 'routing',
       'selectedApps' => 'apps',
       'selectedAppsCount' => 'apps',
       'level' => 'level',
+      'source' => 'source',
       'exitCode' => 'exit',
       'result' => 'result',
       _ => key,
@@ -138,5 +165,98 @@ class LogsScreen extends StatelessWidget {
     }
 
     return '$value';
+  }
+}
+
+class _TrafficPanel extends StatelessWidget {
+  const _TrafficPanel({required this.trafficSnapshot});
+
+  final TrafficSnapshot trafficSnapshot;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+
+    return GlassPanel(
+      borderRadius: BorderRadius.circular(28),
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            'Traffic',
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: _TrafficMetric(
+                  label: 'Upload',
+                  total: trafficSnapshot.uploadTotal,
+                  speed: trafficSnapshot.uploadSpeed,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _TrafficMetric(
+                  label: 'Download',
+                  total: trafficSnapshot.downloadTotal,
+                  speed: trafficSnapshot.downloadSpeed,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TrafficMetric extends StatelessWidget {
+  const _TrafficMetric({
+    required this.label,
+    required this.total,
+    required this.speed,
+  });
+
+  final String label;
+  final String total;
+  final String speed;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            label,
+            style: theme.textTheme.labelLarge,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            total,
+            style: theme.textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            speed,
+            style: theme.textTheme.bodyMedium,
+          ),
+        ],
+      ),
+    );
   }
 }

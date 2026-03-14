@@ -30,6 +30,13 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
   StreamSubscription<Map<String, dynamic>>? _runtimeSubscription;
   String? _activeConnectionId;
   bool _isLoading = true;
+  int? _lastTrafficTimestampMs;
+  int? _lastTrafficTxBytes;
+  int? _lastTrafficRxBytes;
+  String _trafficUploadTotal = '0 B';
+  String _trafficDownloadTotal = '0 B';
+  String _trafficUploadSpeed = '0 B/s';
+  String _trafficDownloadSpeed = '0 B/s';
 
   @override
   void initState() {
@@ -161,6 +168,54 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
     ProxyConnection connection,
   ) async {
     try {
+      final String? previousActiveConnectionId = _activeConnectionId;
+      final bool isSwitching =
+          previousActiveConnectionId != null &&
+          previousActiveConnectionId != connection.id;
+
+      if (previousActiveConnectionId == connection.id) {
+        await _appendLog('Proxy already active: ${connection.name}');
+
+        if (!context.mounted) {
+          return;
+        }
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Profile "${connection.name}" is already active.'),
+          ),
+        );
+        return;
+      }
+
+      if (isSwitching) {
+        final String? previousConnectionName = _connectionNameById(
+          previousActiveConnectionId,
+        );
+        await ProxyRuntime.stop();
+        _resetTrafficStats();
+
+        if (mounted) {
+          setState(() {
+            _activeConnectionId = null;
+          });
+        } else {
+          _activeConnectionId = null;
+        }
+        await _storage.clearActiveConnectionId();
+        await _syncWidgetFromState();
+
+        if (previousConnectionName != null) {
+          await _appendLog('Proxy deactivated: $previousConnectionName');
+          await _appendLog(
+            'Proxy switched: $previousConnectionName -> ${connection.name}',
+          );
+        } else {
+          await _appendLog('Proxy switched to: ${connection.name}');
+        }
+      }
+
+      _resetTrafficStats();
       await ProxyRuntime.start(connection);
 
       setState(() {
@@ -183,7 +238,9 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Profile "${connection.name}" started. Routing: $routingMessage.',
+            isSwitching
+                ? 'Profile switched to "${connection.name}". Routing: $routingMessage.'
+                : 'Profile "${connection.name}" started. Routing: $routingMessage.',
           ),
         ),
       );
@@ -208,6 +265,7 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
   ) async {
     try {
       await ProxyRuntime.stop();
+      _resetTrafficStats();
 
       setState(() {
         _activeConnectionId = null;
@@ -250,6 +308,12 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
               .toList(growable: false)
               .reversed
               .toList(growable: false),
+          trafficSnapshot: TrafficSnapshot(
+            uploadTotal: _trafficUploadTotal,
+            downloadTotal: _trafficDownloadTotal,
+            uploadSpeed: _trafficUploadSpeed,
+            downloadSpeed: _trafficDownloadSpeed,
+          ),
           onClearPressed: _clearLogs,
         ),
       ),
@@ -360,6 +424,7 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
       type: type,
       message: message,
       timestampMs: timestampMs,
+      data: data,
     );
     if (normalizedEntry != null) {
       _appendStructuredLog(normalizedEntry);
@@ -369,6 +434,7 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
         type == 'vpn_revoked' ||
         type == 'tun2proxy_exit' ||
         type == 'vpn_error') {
+      _resetTrafficStats();
       final bool hadActiveConnection = _activeConnectionId != null;
       final String? activeConnectionName = _activeConnectionName();
 
@@ -406,13 +472,16 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
   }
 
   String? _activeConnectionName() {
-    final String? activeId = _activeConnectionId;
-    if (activeId == null) {
+    return _connectionNameById(_activeConnectionId);
+  }
+
+  String? _connectionNameById(String? connectionId) {
+    if (connectionId == null) {
       return null;
     }
 
     for (final ProxyConnection connection in _connections) {
-      if (connection.id == activeId) {
+      if (connection.id == connectionId) {
         return connection.name;
       }
     }
@@ -422,6 +491,7 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
 
   bool _shouldDisplayLogEntry(ConnectionLogEntry entry) {
     return entry.type == 'connection' ||
+        entry.type == 'status' ||
         entry.message.startsWith('Proxy activated:') ||
         entry.message.startsWith('Proxy deactivated:') ||
         entry.message.toLowerCase().contains('error');
@@ -431,6 +501,7 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
     required String type,
     required String message,
     required int? timestampMs,
+    required Map<String, dynamic> data,
   }) {
     final DateTime timestamp = timestampMs == null
         ? DateTime.now()
@@ -454,6 +525,56 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
       return null;
     }
 
+    if (type == 'proxy_ready') {
+      return ConnectionLogEntry(
+        type: 'status',
+        message: 'Proxy ready',
+        timestamp: timestamp,
+        data: <String, dynamic>{
+          if (data['endpoint'] != null) 'endpoint': data['endpoint'],
+          if (data['proxyType'] != null) 'proxyType': data['proxyType'],
+          if (data['source'] != null) 'source': data['source'],
+        },
+      );
+    }
+
+    if (type == 'traffic') {
+      final int tx = (data['tx'] as num?)?.toInt() ?? 0;
+      final int rx = (data['rx'] as num?)?.toInt() ?? 0;
+      final int currentTimestampMs =
+          timestampMs ?? DateTime.now().millisecondsSinceEpoch;
+      final int? previousTimestampMs = _lastTrafficTimestampMs;
+      final int? previousTx = _lastTrafficTxBytes;
+      final int? previousRx = _lastTrafficRxBytes;
+
+      _lastTrafficTimestampMs = currentTimestampMs;
+      _lastTrafficTxBytes = tx;
+      _lastTrafficRxBytes = rx;
+
+      if (previousTimestampMs == null || previousTx == null || previousRx == null) {
+        _updateTrafficSnapshot(
+          uploadTotal: _formatBytes(tx),
+          downloadTotal: _formatBytes(rx),
+          uploadSpeed: '0 B/s',
+          downloadSpeed: '0 B/s',
+        );
+        return null;
+      }
+
+      final int elapsedMs = currentTimestampMs - previousTimestampMs;
+      final int txDelta = tx - previousTx;
+      final int rxDelta = rx - previousRx;
+      final double elapsedSeconds = elapsedMs <= 0 ? 1 : elapsedMs / 1000.0;
+
+      _updateTrafficSnapshot(
+        uploadTotal: _formatBytes(tx),
+        downloadTotal: _formatBytes(rx),
+        uploadSpeed: _formatBytesPerSecond(txDelta <= 0 ? 0 : txDelta / elapsedSeconds),
+        downloadSpeed: _formatBytesPerSecond(rxDelta <= 0 ? 0 : rxDelta / elapsedSeconds),
+      );
+      return null;
+    }
+
     if (type == 'vpn_error') {
       return ConnectionLogEntry(
         type: 'error',
@@ -463,6 +584,72 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
     }
 
     return null;
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) {
+      return '$bytes B';
+    }
+
+    if (bytes < 1024 * 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    }
+
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+  }
+
+  String _formatBytesPerSecond(double bytesPerSecond) {
+    if (bytesPerSecond < 1024) {
+      return '${bytesPerSecond.toStringAsFixed(0)} B/s';
+    }
+
+    if (bytesPerSecond < 1024 * 1024) {
+      return '${(bytesPerSecond / 1024).toStringAsFixed(1)} KB/s';
+    }
+
+    if (bytesPerSecond < 1024 * 1024 * 1024) {
+      return '${(bytesPerSecond / (1024 * 1024)).toStringAsFixed(1)} MB/s';
+    }
+
+    return '${(bytesPerSecond / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB/s';
+  }
+
+  void _resetTrafficStats() {
+    _lastTrafficTimestampMs = null;
+    _lastTrafficTxBytes = null;
+    _lastTrafficRxBytes = null;
+    _updateTrafficSnapshot(
+      uploadTotal: '0 B',
+      downloadTotal: '0 B',
+      uploadSpeed: '0 B/s',
+      downloadSpeed: '0 B/s',
+    );
+  }
+
+  void _updateTrafficSnapshot({
+    required String uploadTotal,
+    required String downloadTotal,
+    required String uploadSpeed,
+    required String downloadSpeed,
+  }) {
+    if (!mounted) {
+      _trafficUploadTotal = uploadTotal;
+      _trafficDownloadTotal = downloadTotal;
+      _trafficUploadSpeed = uploadSpeed;
+      _trafficDownloadSpeed = downloadSpeed;
+      return;
+    }
+
+    setState(() {
+      _trafficUploadTotal = uploadTotal;
+      _trafficDownloadTotal = downloadTotal;
+      _trafficUploadSpeed = uploadSpeed;
+      _trafficDownloadSpeed = downloadSpeed;
+    });
   }
 
   @override
