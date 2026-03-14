@@ -43,8 +43,14 @@ object NativeTun2ProxyBridge {
 
     @JvmStatic
     fun onNativeLog(level: String, message: String) {
-        if (message.startsWith("Beginning #")) {
+        val isConnectionAttempt = message.startsWith("Beginning #")
+        if (isConnectionAttempt) {
             lastConnectionAttemptAtMs = System.currentTimeMillis()
+        }
+        val shouldEmitToFlutter =
+            isConnectionAttempt || level == "warn" || level == "error"
+        if (!shouldEmitToFlutter) {
+            return
         }
         RuntimeEventDispatcher.emit(
             type = "native_log",

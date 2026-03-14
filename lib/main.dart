@@ -27,16 +27,22 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
   final ConnectionStorage _storage = ConnectionStorage();
   final List<ProxyConnection> _connections = <ProxyConnection>[];
   final List<ConnectionLogEntry> _logs = <ConnectionLogEntry>[];
+  final ValueNotifier<TrafficSnapshot> _trafficSnapshotNotifier =
+      ValueNotifier<TrafficSnapshot>(
+        const TrafficSnapshot(
+          uploadTotal: '0 B',
+          downloadTotal: '0 B',
+          uploadSpeed: '0 B/s',
+          downloadSpeed: '0 B/s',
+        ),
+      );
   StreamSubscription<Map<String, dynamic>>? _runtimeSubscription;
   String? _activeConnectionId;
   bool _isLoading = true;
   int? _lastTrafficTimestampMs;
   int? _lastTrafficTxBytes;
   int? _lastTrafficRxBytes;
-  String _trafficUploadTotal = '0 B';
-  String _trafficDownloadTotal = '0 B';
-  String _trafficUploadSpeed = '0 B/s';
-  String _trafficDownloadSpeed = '0 B/s';
+  Timer? _pendingLogSaveTimer;
 
   @override
   void initState() {
@@ -64,6 +70,9 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _runtimeSubscription?.cancel();
+    _pendingLogSaveTimer?.cancel();
+    _flushLogsToStorage();
+    _trafficSnapshotNotifier.dispose();
     super.dispose();
   }
 
@@ -308,12 +317,7 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
               .toList(growable: false)
               .reversed
               .toList(growable: false),
-          trafficSnapshot: TrafficSnapshot(
-            uploadTotal: _trafficUploadTotal,
-            downloadTotal: _trafficDownloadTotal,
-            uploadSpeed: _trafficUploadSpeed,
-            downloadSpeed: _trafficDownloadSpeed,
-          ),
+          trafficListenable: _trafficSnapshotNotifier,
           onClearPressed: _clearLogs,
         ),
       ),
@@ -323,7 +327,8 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
   Future<void> _clearLogs() async {
     if (!mounted) {
       _logs.clear();
-      await _storage.saveLogs(_logs);
+      _pendingLogSaveTimer?.cancel();
+      await _flushLogsToStorage();
       return;
     }
 
@@ -331,7 +336,8 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
       _logs.clear();
     });
 
-    await _storage.saveLogs(_logs);
+    _pendingLogSaveTimer?.cancel();
+    await _flushLogsToStorage();
   }
 
   Future<void> _syncWidgetFromState() async {
@@ -398,7 +404,7 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
   Future<void> _appendStructuredLog(ConnectionLogEntry entry) async {
     if (!mounted) {
       _logs.add(entry);
-      await _storage.saveLogs(_logs);
+      _scheduleLogsSave();
       return;
     }
 
@@ -409,7 +415,7 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
       }
     });
 
-    await _storage.saveLogs(_logs);
+    _scheduleLogsSave();
   }
 
   void _handleRuntimeEvent(Map<String, dynamic> event) {
@@ -636,20 +642,24 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
     required String uploadSpeed,
     required String downloadSpeed,
   }) {
-    if (!mounted) {
-      _trafficUploadTotal = uploadTotal;
-      _trafficDownloadTotal = downloadTotal;
-      _trafficUploadSpeed = uploadSpeed;
-      _trafficDownloadSpeed = downloadSpeed;
-      return;
-    }
+    _trafficSnapshotNotifier.value = TrafficSnapshot(
+      uploadTotal: uploadTotal,
+      downloadTotal: downloadTotal,
+      uploadSpeed: uploadSpeed,
+      downloadSpeed: downloadSpeed,
+    );
+  }
 
-    setState(() {
-      _trafficUploadTotal = uploadTotal;
-      _trafficDownloadTotal = downloadTotal;
-      _trafficUploadSpeed = uploadSpeed;
-      _trafficDownloadSpeed = downloadSpeed;
-    });
+  void _scheduleLogsSave() {
+    _pendingLogSaveTimer?.cancel();
+    _pendingLogSaveTimer = Timer(
+      const Duration(milliseconds: 800),
+      _flushLogsToStorage,
+    );
+  }
+
+  Future<void> _flushLogsToStorage() async {
+    await _storage.saveLogs(_logs);
   }
 
   @override

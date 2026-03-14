@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/connection_log_entry.dart';
@@ -22,12 +23,12 @@ class LogsScreen extends StatelessWidget {
   const LogsScreen({
     super.key,
     required this.logs,
-    required this.trafficSnapshot,
+    required this.trafficListenable,
     required this.onClearPressed,
   });
 
   final List<ConnectionLogEntry> logs;
-  final TrafficSnapshot trafficSnapshot;
+  final ValueListenable<TrafficSnapshot> trafficListenable;
   final Future<void> Function() onClearPressed;
 
   @override
@@ -70,7 +71,16 @@ class LogsScreen extends StatelessWidget {
               sliver: SliverList(
                 delegate: SliverChildListDelegate(
                   <Widget>[
-                    _TrafficPanel(trafficSnapshot: trafficSnapshot),
+                    ValueListenableBuilder<TrafficSnapshot>(
+                      valueListenable: trafficListenable,
+                      builder: (
+                        BuildContext context,
+                        TrafficSnapshot trafficSnapshot,
+                        Widget? child,
+                      ) {
+                        return _TrafficPanel(trafficSnapshot: trafficSnapshot);
+                      },
+                    ),
                     const SizedBox(height: 12),
                     GlassPanel(
                       borderRadius: BorderRadius.circular(28),
@@ -175,39 +185,25 @@ class _TrafficPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
-
     return GlassPanel(
       borderRadius: BorderRadius.circular(28),
       padding: const EdgeInsets.all(18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: <Widget>[
-          Text(
-            'Traffic',
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
+          Expanded(
+            child: _TrafficMetric(
+              label: 'Upload',
+              total: trafficSnapshot.uploadTotal,
+              speed: trafficSnapshot.uploadSpeed,
             ),
           ),
-          const SizedBox(height: 14),
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: _TrafficMetric(
-                  label: 'Upload',
-                  total: trafficSnapshot.uploadTotal,
-                  speed: trafficSnapshot.uploadSpeed,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _TrafficMetric(
-                  label: 'Download',
-                  total: trafficSnapshot.downloadTotal,
-                  speed: trafficSnapshot.downloadSpeed,
-                ),
-              ),
-            ],
+          const SizedBox(width: 12),
+          Expanded(
+            child: _TrafficMetric(
+              label: 'Download',
+              total: trafficSnapshot.downloadTotal,
+              speed: trafficSnapshot.downloadSpeed,
+            ),
           ),
         ],
       ),
