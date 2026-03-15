@@ -48,7 +48,7 @@ object NativeTun2ProxyBridge {
             lastConnectionAttemptAtMs = System.currentTimeMillis()
         }
         val shouldEmitToFlutter =
-            isConnectionAttempt || level == "warn" || level == "error"
+            level == "info" || level == "warn" || level == "error"
         if (!shouldEmitToFlutter) {
             return
         }

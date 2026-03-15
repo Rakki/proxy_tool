@@ -22,12 +22,12 @@ class TrafficSnapshot {
 class LogsScreen extends StatelessWidget {
   const LogsScreen({
     super.key,
-    required this.logs,
+    required this.logsListenable,
     required this.trafficListenable,
     required this.onClearPressed,
   });
 
-  final List<ConnectionLogEntry> logs;
+  final ValueListenable<List<ConnectionLogEntry>> logsListenable;
   final ValueListenable<TrafficSnapshot> trafficListenable;
   final Future<void> Function() onClearPressed;
 
@@ -49,17 +49,11 @@ class LogsScreen extends StatelessWidget {
               title: const Text('Connection logs'),
               actions: <Widget>[
                 TextButton(
-                  onPressed: logs.isEmpty
-                      ? null
-                      : () async {
-                          await onClearPressed();
-                          if (context.mounted) {
-                            Navigator.of(context).pop();
-                          }
-                        },
+                  onPressed: () async {
+                    await onClearPressed();
+                  },
                   style: TextButton.styleFrom(
                     foregroundColor: Colors.white,
-                    disabledForegroundColor: Colors.white54,
                   ),
                   child: const Text('Clear'),
                 ),
@@ -82,41 +76,50 @@ class LogsScreen extends StatelessWidget {
                       },
                     ),
                     const SizedBox(height: 12),
-                    GlassPanel(
-                      borderRadius: BorderRadius.circular(28),
-                      padding: const EdgeInsets.all(18),
-                      child: logs.isEmpty
-                          ? Center(
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 24),
-                                child: Text(
-                                  'No logs yet',
-                                  style: theme.textTheme.titleMedium,
-                                ),
-                              ),
-                            )
-                          : Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: <Widget>[
-                                for (int index = 0; index < logs.length; index++) ...<Widget>[
-                                  Padding(
-                                    padding: const EdgeInsets.symmetric(vertical: 10),
-                                    child: SelectableText(
-                                      _formatEntry(logs[index]),
-                                      style: theme.textTheme.bodyMedium?.copyWith(
-                                        height: 1.5,
-                                      ),
+                    ValueListenableBuilder<List<ConnectionLogEntry>>(
+                      valueListenable: logsListenable,
+                      builder: (
+                        BuildContext context,
+                        List<ConnectionLogEntry> logs,
+                        Widget? child,
+                      ) {
+                        return GlassPanel(
+                          borderRadius: BorderRadius.circular(28),
+                          padding: const EdgeInsets.all(18),
+                          child: logs.isEmpty
+                              ? Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 24),
+                                    child: Text(
+                                      'No logs yet',
+                                      style: theme.textTheme.titleMedium,
                                     ),
                                   ),
-                                  if (index != logs.length - 1)
-                                    Divider(
-                                      height: 1,
-                                      thickness: 1,
-                                      color: Colors.white.withValues(alpha: 0.24),
-                                    ),
-                                ],
-                              ],
-                            ),
+                                )
+                              : Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: <Widget>[
+                                    for (int index = 0; index < logs.length; index++) ...<Widget>[
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(vertical: 10),
+                                        child: SelectableText(
+                                          _formatEntry(logs[index]),
+                                          style: theme.textTheme.bodyMedium?.copyWith(
+                                            height: 1.5,
+                                          ),
+                                        ),
+                                      ),
+                                      if (index != logs.length - 1)
+                                        Divider(
+                                          height: 1,
+                                          thickness: 1,
+                                          color: Colors.white.withValues(alpha: 0.24),
+                                        ),
+                                    ],
+                                  ],
+                                ),
+                        );
+                      },
                     ),
                   ],
                 ),

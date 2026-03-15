@@ -27,6 +27,8 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
   final ConnectionStorage _storage = ConnectionStorage();
   final List<ProxyConnection> _connections = <ProxyConnection>[];
   final List<ConnectionLogEntry> _logs = <ConnectionLogEntry>[];
+  final ValueNotifier<List<ConnectionLogEntry>> _logsListenable =
+      ValueNotifier<List<ConnectionLogEntry>>(const <ConnectionLogEntry>[]);
   final ValueNotifier<TrafficSnapshot> _trafficSnapshotNotifier =
       ValueNotifier<TrafficSnapshot>(
         const TrafficSnapshot(
@@ -72,6 +74,7 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
     _runtimeSubscription?.cancel();
     _pendingLogSaveTimer?.cancel();
     _flushLogsToStorage();
+    _logsListenable.dispose();
     _trafficSnapshotNotifier.dispose();
     super.dispose();
   }
@@ -104,6 +107,7 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
       _activeConnectionId = savedActiveConnectionId;
       _isLoading = false;
     });
+    _publishVisibleLogs();
 
     await _refreshRuntimeStateFromNative();
     await _syncWidgetFromState();
@@ -312,11 +316,7 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => LogsScreen(
-          logs: _logs
-              .where(_shouldDisplayLogEntry)
-              .toList(growable: false)
-              .reversed
-              .toList(growable: false),
+          logsListenable: _logsListenable,
           trafficListenable: _trafficSnapshotNotifier,
           onClearPressed: _clearLogs,
         ),
@@ -327,6 +327,7 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
   Future<void> _clearLogs() async {
     if (!mounted) {
       _logs.clear();
+      _publishVisibleLogs();
       _pendingLogSaveTimer?.cancel();
       await _flushLogsToStorage();
       return;
@@ -335,6 +336,7 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
     setState(() {
       _logs.clear();
     });
+    _publishVisibleLogs();
 
     _pendingLogSaveTimer?.cancel();
     await _flushLogsToStorage();
@@ -404,6 +406,7 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
   Future<void> _appendStructuredLog(ConnectionLogEntry entry) async {
     if (!mounted) {
       _logs.add(entry);
+      _publishVisibleLogs();
       _scheduleLogsSave();
       return;
     }
@@ -414,6 +417,7 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
         _logs.removeRange(0, _logs.length - 200);
       }
     });
+    _publishVisibleLogs();
 
     _scheduleLogsSave();
   }
@@ -660,6 +664,14 @@ class _ProxyToolAppState extends State<ProxyToolApp> with WidgetsBindingObserver
 
   Future<void> _flushLogsToStorage() async {
     await _storage.saveLogs(_logs);
+  }
+
+  void _publishVisibleLogs() {
+    _logsListenable.value = _logs
+        .where(_shouldDisplayLogEntry)
+        .toList(growable: false)
+        .reversed
+        .toList(growable: false);
   }
 
   @override
